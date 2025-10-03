@@ -15,7 +15,7 @@ fn prime(n: u32) -> bool {
         if n % i == 0 {
             return false;
         }
-        i = i + 1;
+        i += 1;
         if i as f32 > babylonian_sqrt(n as f32) { //am aflat ulterior ca sqrt e facuta metoda in rust ceea ce face mult sens but this is more fun asa ca las asa :))
             break;
         }
@@ -29,9 +29,9 @@ fn coprime(mut a: u32, mut b: u32) -> bool {
     }
     while a != b {
         if a > b {
-            a = a - b;
+            a -= b;
         } else if a < b {
-            b = b - a;
+            b -= a;
         }
     }
     if a == 1 {
