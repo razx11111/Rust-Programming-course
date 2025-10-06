@@ -16,7 +16,8 @@ fn prime(n: u32) -> bool {
             return false;
         }
         i += 1;
-        if i as f32 > babylonian_sqrt(n as f32) { //am aflat ulterior ca sqrt e facuta metoda in rust ceea ce face mult sens but this is more fun asa ca las asa :))
+        if i as f32 > babylonian_sqrt(n as f32) {
+            //am aflat ulterior ca sqrt e facuta metoda in rust ceea ce face mult sens but this is more fun asa ca las asa :))
             break;
         }
     }
