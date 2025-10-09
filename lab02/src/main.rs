@@ -1,3 +1,4 @@
+
 fn add_chars_n(s: &mut String, caracter: char, num: u8) {
     for _i in 0..num {
         s.push(caracter);
@@ -11,7 +12,7 @@ fn add_space(s: &mut String, n:u32) {
 }
 
 fn add_str(mut s:String, str: &str) -> String {
-    s += &str;
+    s += str;
     s
 }
 
@@ -35,31 +36,39 @@ fn add_integer(s: &mut String, mut n: i32, is_float: bool) {
     let mut count:u8 = 0;
     
     while exp != 0 {
-        if count % 3 == 0 && count != 0 && is_float == false {
+        if count % 3 == 0 && count != 0 && !is_float {
             s.push('_');
         }
-        s.push((((n / exp) % 10) as u8 + b'0') as char); //idk daca trb atatea paranteze but why not
+        s.push((((n / exp) % 10) as u8 + b'0') as char); 
         exp /= 10;
         count += 1;
     }
 }
 
-fn add_float( s: &mut String, mut n: f64) {
+fn add_float(s: &mut String, mut n: f64) {
+    const EPSILON: f64 = 1e-10;
+    
     if n < 0.0 {
         s.push('-');
         n *= -1.0;
     }
 
-    let int_part:i32 = n as i32;
+    let int_part: i32 = n as i32;
     add_integer(s, int_part, true);
     s.push('.');
-    let mut forward:f64 = n*10.0;
+    let mut digit:u32;
     
-    while forward % 10.0 != 0.0 {
-        let digit = (forward as i32) % 10;
-        s.push((digit as u8 + b'0') as char);
-        forward *= 10.0;
-        n*=10.0;
+    n = n - (int_part as f64);
+    
+    for _i in 0..6 { // merge si cu mai mult de 6 zecimale
+        n *= 10.0;
+        digit = (n + EPSILON).floor() as u32; // APARENT DACA ADAUG EPSILON NU MAI ARE ERORI DE PRECIZIE(cred idk)
+        s.push((digit as u8 + b'0') as char); // revelatie
+        n -= digit as f64;
+    }
+
+    while s.ends_with('0') {
+        s.pop();
     }
 }
 
@@ -67,7 +76,7 @@ fn main() {
     let mut s = String::from("");
     let mut i = 0;
     while i < 26 {
-        let c = (i as u8 + b'a') as char;
+        let c = (i + b'a') as char;
         add_chars_n(&mut s, c, 26 - i);
 
         i += 1;
