@@ -10,7 +10,7 @@ fn add_space(s: &mut String, n:u32) {
     }
 }
 
-fn add_str(mut s:String, str: String) -> String {
+fn add_str(mut s:String, str: &str) -> String {
     s += &str;
     s
 }
@@ -38,7 +38,7 @@ fn add_integer(s: &mut String, mut n: i32, is_float: bool) {
         if count % 3 == 0 && count != 0 && is_float == false {
             s.push('_');
         }
-        s.push((((n / exp) % 10) as u8 + '0' as u8) as char); //idk daca trb atatea paranteze but why not
+        s.push((((n / exp) % 10) as u8 + b'0') as char); //idk daca trb atatea paranteze but why not
         exp /= 10;
         count += 1;
     }
@@ -57,7 +57,7 @@ fn add_float( s: &mut String, mut n: f64) {
     
     while forward % 10.0 != 0.0 {
         let digit = (forward as i32) % 10;
-        s.push((digit as u8 + '0' as u8) as char);
+        s.push((digit as u8 + b'0') as char);
         forward *= 10.0;
         n*=10.0;
     }
@@ -67,12 +67,44 @@ fn main() {
     let mut s = String::from("");
     let mut i = 0;
     while i < 26 {
-        let c = (i as u8 + 'a' as u8) as char;
+        let c = (i as u8 + b'a') as char;
         add_chars_n(&mut s, c, 26 - i);
 
         i += 1;
     }
-    add_integer(&mut s, -323443, false);
-    add_float(&mut s, -7434.14785);
     print!("{}", s);
+
+    let mut s1:String = String::from("");
+
+    s1 = add_str(s1, "\n" );
+    add_space(&mut s1, 40);
+    s1 = add_str(s1, "I \u{1F49A} \n" );
+    add_space(&mut s1, 40);
+    s1 = add_str(s1, "RUST. \n" );
+    s1 = add_str(s1, "Most");
+    add_space(&mut s1, " downloaded ".len() as u32);
+    s1 = add_str(s1, "crate");
+    add_space(&mut s1, " has ".len() as u32);
+    add_integer(&mut s1, 306437968, false);
+    add_space(&mut s1, " downloads ".len() as u32);
+    s1 = add_str(s1, "and");
+    add_space(&mut s1, " the ".len() as u32);
+    s1 = add_str(s1, "lastest");
+    add_space(&mut s1, " version ".len() as u32);
+    s1 = add_str(s1, "is\n");
+    add_space(&mut s1, "Most ".len() as u32);
+    s1 = add_str(s1, "downloaded" );
+    add_space(&mut s1, " crate ".len() as u32);
+    s1 = add_str(s1, "has" );
+    add_space(&mut s1, " 306_437_968 ".len() as u32);
+    s1 = add_str(s1, "downloads" );
+    add_space(&mut s1, " and ".len() as u32);
+    s1 = add_str(s1, "the" );
+    add_space(&mut s1, " lastest ".len() as u32);
+    s1 = add_str(s1, "version" );
+    add_space(&mut s1, " is ".len() as u32);
+    add_float(&mut s1, 2.038);
+    s1 = add_str(s1, "." );
+    println!("{s1}");
+
 }
