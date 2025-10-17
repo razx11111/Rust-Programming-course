@@ -29,12 +29,7 @@ fn prime(n: u16) -> bool {
 }
 
 fn next_prime(x: u16) -> Option<u16> {
-    for i in x + 1..u16::MAX { // clippy spune sa fac asa: (x + 1..u16::MAX).find(|&i| prime(i)) but NOO thanks
-        if prime(i) {
-            return Some(i);
-        }
-    }
-    None
+    (x + 1..u16::MAX).find(|&i| prime(i))
 }
 
 fn add_check(a:u32, b:u32) -> u32 {
@@ -101,7 +96,35 @@ fn print_char(c: char ) -> Result<(), Panica> {
     }
 }
 
+fn char_to_number(c: char ) -> Result<u32, Panica> {
+    if !c.is_ascii_digit() {
+        Err(Panica::NotDigit)
+    } else if !c.is_ascii()  {
+        Err(Panica::NotAscii)
+    } else {
+        Ok(c.to_digit(10).unwrap())
+    }
+}
 
+fn char_to_numbeer_hex(c: char ) -> Result<u32, Panica> {
+    if !c.is_ascii_hexdigit() {
+        Err(Panica::NonBase16)
+    } else if !c.is_ascii()  {
+        Err(Panica::NotAscii)
+    } else {
+        Ok(c.to_digit(16).unwrap())
+    }
+}
+
+fn print_error(e: Panica) {
+    match e {
+        Panica::NotAscii => println!("Character is not ASCII"),
+        Panica::NotDigit => println!("Character is not a digit"),
+        Panica::NonBase16 => println!("Character is not a base 16 digit"),
+        Panica::NotLetter => println!("Character is not a letter"),
+        Panica::NonPrintable => println!("Character is not printable"),
+    }
+}
 
 fn main() {
     let mut x: u16 = 65500;
@@ -158,5 +181,72 @@ fn main() {
     match res_mul_check(u32::MAX, 2) {
         Ok(result) => println!("Success: {}", result),
         Err(e) => println!("Expected overflow error: {:?}", e),
+    }
+
+    println!("\n=== Testing Character Operations ===");
+    
+    // Test to_uppercase
+    println!("\nTesting to_uppercase:");
+    let test_chars = vec!['a', 'Z', '1', '❤'];
+    for c in test_chars {
+        match to_uppercase(c) {
+            Ok(result) => println!("Success: {} -> {}", c, result),
+            Err(e) => {
+                print!("Error for '{}': ", c);
+                print_error(e);
+            }
+        }
+    }
+
+    // Test to_lowercase
+    println!("\nTesting to_lowercase:");
+    let test_chars = vec!['A', 'z', '1', '☺'];
+    for c in test_chars {
+        match to_lowercase(c) {
+            Ok(result) => println!("Success: {} -> {}", c, result),
+            Err(e) => {
+                print!("Error for '{}': ", c);
+                print_error(e);
+            }
+        }
+    }
+
+    // Test print_char
+    println!("\nTesting print_char:");
+    let test_chars = vec!['\n', 'x', '\t', '😀'];
+    for c in test_chars {
+        match print_char(c) {
+            Ok(()) => println!(" -> Success"),
+            Err(e) => {
+                print!("Error for '{}': ", c);
+                print_error(e);
+            }
+        }
+    }
+
+    // Test char_to_number
+    println!("\nTesting char_to_number:");
+    let test_chars = vec!['0', '9', 'A', '❤'];
+    for c in test_chars {
+        match char_to_number(c) {
+            Ok(result) => println!("Success: {} -> {}", c, result),
+            Err(e) => {
+                print!("Error for '{}': ", c);
+                print_error(e);
+            }
+        }
+    }
+
+    // Test char_to_numbeer_hex
+    println!("\nTesting char_to_numbeer_hex:");
+    let test_chars = vec!['0', 'F', 'G', '❤'];
+    for c in test_chars {
+        match char_to_numbeer_hex(c) {
+            Ok(result) => println!("Success: {} -> {}", c, result),
+            Err(e) => {
+                print!("Error for '{}': ", c);
+                print_error(e);
+            }
+        }
     }
 }
