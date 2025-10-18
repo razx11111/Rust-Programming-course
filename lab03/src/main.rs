@@ -126,13 +126,12 @@ fn print_error(e: Aoleu) {
 //5. functie care verifica ca fiecare cuv aresufixul _gd
 
 fn check_gd(prop: String) -> Result<String, String> {
-    for cuv in prop.split_ascii_whitespace() { 
-        if cuv[cuv.len()-3..cuv.len()].to_string() != "_gd" {
+    for cuv in prop.split_ascii_whitespace() {
+        if cuv[cuv.len() - 3..cuv.len()].to_string() != "_gd" {
             return Err("non-valid".to_string());
         }
     }
     Ok(prop.to_string())
-    
 }
 
 fn main() {
