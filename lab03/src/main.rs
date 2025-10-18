@@ -1,6 +1,4 @@
-use core::panic;
-
-enum Panica {
+enum Aoleu {
     NotAscii,
     NotDigit,
     NonBase16,
@@ -32,7 +30,7 @@ fn next_prime(x: u16) -> Option<u16> {
     (x + 1..u16::MAX).find(|&i| prime(i))
 }
 
-fn add_check(a:u32, b:u32) -> u32 {
+fn add_check(a: u32, b: u32) -> u32 {
     if (a as u64 + b as u64) > u32::MAX as u64 {
         panic!("too much");
     } else {
@@ -40,16 +38,15 @@ fn add_check(a:u32, b:u32) -> u32 {
     }
 }
 
-fn res_mul_check(a:u32, b:u32) -> Result<u32, String> {
+fn res_mul_check(a: u32, b: u32) -> Result<u32, String> {
     if (a as u64 * b as u64) > u32::MAX as u64 {
         Err("too much".to_string())
-    } 
-    else {
+    } else {
         Ok(a * b)
     }
 }
 
-fn res_add_check(a:u32, b:u32) -> Result<u32, String> {
+fn res_add_check(a: u32, b: u32) -> Result<u32, String> {
     if (a as u64 + b as u64) > u32::MAX as u64 {
         Err("too much".to_string())
     } else {
@@ -57,7 +54,7 @@ fn res_add_check(a:u32, b:u32) -> Result<u32, String> {
     }
 }
 
-fn mul_check(a:u32, b:u32) -> u32 {
+fn mul_check(a: u32, b: u32) -> u32 {
     if (a as u64 * b as u64) > u32::MAX as u64 {
         panic!("too much");
     } else {
@@ -65,9 +62,9 @@ fn mul_check(a:u32, b:u32) -> u32 {
     }
 }
 
-fn to_uppercase(c: char ) -> Result<char, Panica> {
+fn to_uppercase(c: char) -> Result<char, Aoleu> {
     if !c.is_alphabetic() {
-        Err(Panica::NotLetter)
+        Err(Aoleu::NotLetter)
     } else if c.is_lowercase() {
         Ok(c.to_ascii_uppercase())
     } else {
@@ -75,9 +72,9 @@ fn to_uppercase(c: char ) -> Result<char, Panica> {
     }
 }
 
-fn to_lowercase(c: char ) -> Result<char, Panica> {
+fn to_lowercase(c: char) -> Result<char, Aoleu> {
     if !c.is_alphabetic() {
-        Err(Panica::NotLetter)
+        Err(Aoleu::NotLetter)
     } else if c.is_uppercase() {
         Ok(c.to_ascii_lowercase())
     } else {
@@ -85,45 +82,57 @@ fn to_lowercase(c: char ) -> Result<char, Panica> {
     }
 }
 
-fn print_char(c: char ) -> Result<(), Panica> {
+fn print_char(c: char) -> Result<(), Aoleu> {
     if !c.is_ascii() {
-        Err(Panica::NotAscii)
+        Err(Aoleu::NotAscii)
     } else if !c.is_control() {
-        Err(Panica::NonPrintable)
+        Err(Aoleu::NonPrintable)
     } else {
         print!("{}", c);
         Ok(())
     }
 }
 
-fn char_to_number(c: char ) -> Result<u32, Panica> {
+fn char_to_number(c: char) -> Result<u32, Aoleu> {
     if !c.is_ascii_digit() {
-        Err(Panica::NotDigit)
-    } else if !c.is_ascii()  {
-        Err(Panica::NotAscii)
+        Err(Aoleu::NotDigit)
+    } else if !c.is_ascii() {
+        Err(Aoleu::NotAscii)
     } else {
         Ok(c.to_digit(10).unwrap())
     }
 }
 
-fn char_to_numbeer_hex(c: char ) -> Result<u32, Panica> {
+fn char_to_numbeer_hex(c: char) -> Result<u32, Aoleu> {
     if !c.is_ascii_hexdigit() {
-        Err(Panica::NonBase16)
-    } else if !c.is_ascii()  {
-        Err(Panica::NotAscii)
+        Err(Aoleu::NonBase16)
+    } else if !c.is_ascii() {
+        Err(Aoleu::NotAscii)
     } else {
         Ok(c.to_digit(16).unwrap())
     }
 }
 
-fn print_error(e: Panica) {
+fn print_error(e: Aoleu) {
     match e {
-        Panica::NotAscii => println!("Character is not ASCII"),
-        Panica::NotDigit => println!("Character is not a digit"),
-        Panica::NonBase16 => println!("Character is not a base 16 digit"),
-        Panica::NotLetter => println!("Character is not a letter"),
-        Panica::NonPrintable => println!("Character is not printable"),
+        Aoleu::NotAscii => println!("Character is not ASCII"),
+        Aoleu::NotDigit => println!("Character is not a digit"),
+        Aoleu::NonBase16 => println!("Character is not a base 16 digit"),
+        Aoleu::NotLetter => println!("Character is not a letter"),
+        Aoleu::NonPrintable => println!("Character is not printable"),
     }
+}
+
+//5. functie care verifica ca fiecare cuv aresufixul _gd
+
+fn check_gd(prop: String) -> Result<String, String> {
+    for cuv in prop.split_ascii_whitespace() { 
+        if cuv[cuv.len()-3..cuv.len()].to_string() != "_gd" {
+            return Err("non-valid".to_string());
+        }
+    }
+    Ok(prop.to_string())
+    
 }
 
 fn main() {
@@ -137,19 +146,15 @@ fn main() {
             println!("The next prime after {} is {:?}", x, y);
         }
     }
-    println!("\n=== Testing Addition Operations ===");
-    // Test add_check
+
     println!("Testing add_check:");
     let success = add_check(10, 20);
     println!("Success: 10 + 20 = {}", success);
-    
+
     println!("\nTesting add_check overflow:");
     let result = std::panic::catch_unwind(|| add_check(u32::MAX, 1));
     println!("Caught panic: {}", result.is_err());
 
-
-
-    // Test res_add_check
     println!("\nTesting res_add_check:");
     match res_add_check(10, 20) {
         Ok(result) => println!("Success: 10 + 20 = {}", result),
@@ -161,8 +166,6 @@ fn main() {
         Err(e) => println!("Expected overflow error: {:?}", e),
     }
 
-    println!("\n=== Testing Multiplication Operations ===");
-    // Test mul_check
     println!("Testing mul_check:");
     let success = mul_check(10, 20);
     println!("Success: 10 * 20 = {}", success);
@@ -171,7 +174,6 @@ fn main() {
     let result = std::panic::catch_unwind(|| mul_check(u32::MAX, 2));
     println!("Caught panic: {}", result.is_err());
 
-    // Test res_mul_check
     println!("\nTesting res_mul_check:");
     match res_mul_check(10, 20) {
         Ok(result) => println!("Success: 10 * 20 = {}", result),
@@ -183,9 +185,6 @@ fn main() {
         Err(e) => println!("Expected overflow error: {:?}", e),
     }
 
-    println!("\n=== Testing Character Operations ===");
-    
-    // Test to_uppercase
     println!("\nTesting to_uppercase:");
     let test_chars = vec!['a', 'Z', '1', '❤'];
     for c in test_chars {
@@ -198,7 +197,6 @@ fn main() {
         }
     }
 
-    // Test to_lowercase
     println!("\nTesting to_lowercase:");
     let test_chars = vec!['A', 'z', '1', '☺'];
     for c in test_chars {
@@ -211,7 +209,6 @@ fn main() {
         }
     }
 
-    // Test print_char
     println!("\nTesting print_char:");
     let test_chars = vec!['\n', 'x', '\t', '😀'];
     for c in test_chars {
@@ -224,7 +221,6 @@ fn main() {
         }
     }
 
-    // Test char_to_number
     println!("\nTesting char_to_number:");
     let test_chars = vec!['0', '9', 'A', '❤'];
     for c in test_chars {
@@ -237,7 +233,6 @@ fn main() {
         }
     }
 
-    // Test char_to_numbeer_hex
     println!("\nTesting char_to_numbeer_hex:");
     let test_chars = vec!['0', 'F', 'G', '❤'];
     for c in test_chars {
@@ -248,5 +243,17 @@ fn main() {
                 print_error(e);
             }
         }
+    }
+
+    let good = "word_gd another_gd";
+    match check_gd(good.to_string()) {
+        Ok(s) => println!("Success: {:?}", s),
+        Err(e) => println!("Error: {}", e),
+    }
+
+    let bad = "ok_gd badword notgd";
+    match check_gd(bad.to_string()) {
+        Ok(s) => println!("Unexpected success: {:?}", s),
+        Err(e) => println!("Expected error: {}", e),
     }
 }
