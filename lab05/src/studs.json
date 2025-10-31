@@ -1,23 +1,4 @@
-
-[
-    {
-        "name": "Constantin",
-        "phone_no": "0711111111",
-        "age": 21
-    },
-    {
-        "name": "Mihai",
-        "phone_no": "0722222222",
-        "age": 23
-    },
-    {
-        "name": "Elena",
-        "phone_no": "073333333333",
-        "age": 25
-    },
-    {
-        "name": "Diana",
-        "phone_no": "0744444444",
-        "age": 20
-    }
-]
+{"name":"Constantin","phone_no":"0711111111","age":21}
+{"name":"Mihai","phone_no":"0722222222","age":23}//imi da eroare la prima acolada ca cica se astepta la eof dar merge idk
+{"name":"Elena","phone_no":"073333333333","age":25}
+{"name":"Diana","phone_no":"0744444444","age":20}
