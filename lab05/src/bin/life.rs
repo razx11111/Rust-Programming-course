@@ -3,7 +3,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use std::{fs, io};
 
-type World = Box<[[Element; 75]; 51]>;
+type World = Box<[[Element; 85]; 41]>;
 
 #[derive(Clone, Copy)]
 struct Element {
@@ -46,7 +46,7 @@ fn initialize_world() -> World {
             alive: false,
             alive_neighbors: 0,
             display_char: ' ',
-        }; 75]; 51],
+        }; 85]; 41],
     )
 }
 
@@ -58,8 +58,8 @@ fn parse_into_world(world: &mut World) -> Result<World, io::Error> {
         let alive_neighbors: usize = elements.next().unwrap().parse().unwrap();
         let display_char: char = elements.next().unwrap().chars().next().unwrap();
         let (mut x_rand, mut y_rand) = (
-            rand::random::<usize>() % 49 + 1,
-            rand::random::<usize>() % 73 + 1,
+            rand::random::<usize>() % 39 + 1,
+            rand::random::<usize>() % 83 + 1,
         );
         if world[x_rand][y_rand].display_char == ' ' {
             world[x_rand][y_rand].alive = alive;
@@ -68,8 +68,8 @@ fn parse_into_world(world: &mut World) -> Result<World, io::Error> {
         } else {
             loop {
                 (x_rand, y_rand) = (
-                    rand::random::<usize>() % 49 + 1,
-                    rand::random::<usize>() % 73 + 1,
+                    rand::random::<usize>() % 39 + 1,
+                    rand::random::<usize>() % 83 + 1,
                 );
                 if world[x_rand][y_rand].display_char == ' ' {
                     world[x_rand][y_rand].alive = alive;
@@ -83,19 +83,28 @@ fn parse_into_world(world: &mut World) -> Result<World, io::Error> {
     Ok(world.clone())
 }
 
-fn print(world: &World) {
+fn print(world: &World) -> u32{
+    let mut live_cells: u32 = 0;
     for row in world.iter() {
         for element in row.iter() {
+            live_cells += if element.alive { 1 } else { 0 };
             print!("{}", element.display_char);
         }
         println!();
     }
+    live_cells
 }
 
 fn the_actual_event() {
     let mut world = initialize_world();
     world = parse_into_world(&mut world).unwrap();
-    print(&world);
+    let mut generation: u64 = 0;
+    let mut live_cells:u32;
+    
+    live_cells = print(&world);
+    println!("Generation: {}, Live cells: {}", generation, live_cells);
+    generation = 1;
+
     ctrlc::set_handler(move || {
         println!("Za Warudo");
         exit(0);
@@ -111,16 +120,16 @@ fn the_actual_event() {
         sleep(Duration::from_millis(200));
         clearscreen::clear().expect("failed to clear screen");
 
-        for x in 1..50 {
-            for y in 1..74 {
+        for x in 1..40 {
+            for y in 1..84 {
                 check_neighbors(&mut world, x, y);
             }
         }
 
         let mut next_gen = initialize_world();
 
-        for x in 1..50 {
-            for y in 1..74 {
+        for x in 1..40 {
+            for y in 1..84 {
                 let neighbors = world[x][y].alive_neighbors;
 
                 if world[x][y].alive {
@@ -136,7 +145,9 @@ fn the_actual_event() {
         }
 
         world = next_gen;
-        print(&world);
+        live_cells = print(&world);
+        println!("Generation: {}, Live cells: {}", generation, live_cells);
+        generation += 1;
     }
 }
 
