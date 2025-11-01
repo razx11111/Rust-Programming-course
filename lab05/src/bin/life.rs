@@ -3,7 +3,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use std::{fs, io};
 
-type World = Box<[[Element; 101]; 51]>;
+type World = Box<[[Element; 75]; 51]>;
 
 #[derive(Clone, Copy)]
 struct Element {
@@ -46,7 +46,7 @@ fn initialize_world() -> World {
             alive: false,
             alive_neighbors: 0,
             display_char: ' ',
-        }; 101]; 51],
+        }; 75]; 51],
     )
 }
 
@@ -59,7 +59,7 @@ fn parse_into_world(world: &mut World) -> Result<World, io::Error> {
         let display_char: char = elements.next().unwrap().chars().next().unwrap();
         let (mut x_rand, mut y_rand) = (
             rand::random::<usize>() % 49 + 1,
-            rand::random::<usize>() % 99 + 1,
+            rand::random::<usize>() % 73 + 1,
         );
         if world[x_rand][y_rand].display_char == ' ' {
             world[x_rand][y_rand].alive = alive;
@@ -69,7 +69,7 @@ fn parse_into_world(world: &mut World) -> Result<World, io::Error> {
             loop {
                 (x_rand, y_rand) = (
                     rand::random::<usize>() % 49 + 1,
-                    rand::random::<usize>() % 99 + 1,
+                    rand::random::<usize>() % 73 + 1,
                 );
                 if world[x_rand][y_rand].display_char == ' ' {
                     world[x_rand][y_rand].alive = alive;
@@ -96,26 +96,23 @@ fn the_actual_event() {
     let mut world = initialize_world();
     world = parse_into_world(&mut world).unwrap();
     print(&world);
+    ctrlc::set_handler(move || {
+        println!("Za Warudo");
+        exit(0);
+    })
+    .expect("Error setting Ctrl-C handler");
 
-    // ctrlc::set_handler(move || {
-    //     println!("Thannos snapped :(");
-    //     print(&world);
-    //     exit(0);
-    // })
-    // .expect("Error setting Ctrl-C handler");
-    world[33][33].alive = true;
-    world[33][33].display_char = 'x';
-    world[33][34].alive = true;
-    world[33][34].display_char = 'x';
-    world[33][32].alive = true;
-    world[33][32].display_char = 'x';
+    add_blinker2(3, 3, &mut world);
+    add_gosper_glider_gun(10, 10, &mut world);
+    add_pentadecathlon(20, 50, &mut world);
+    add_lwss(30, 70, &mut world);
 
     loop {
-        sleep(Duration::from_millis(300));
+        sleep(Duration::from_millis(200));
         clearscreen::clear().expect("failed to clear screen");
 
         for x in 1..50 {
-            for y in 1..100 {
+            for y in 1..74 {
                 check_neighbors(&mut world, x, y);
             }
         }
@@ -123,7 +120,7 @@ fn the_actual_event() {
         let mut next_gen = initialize_world();
 
         for x in 1..50 {
-            for y in 1..100 {
+            for y in 1..74 {
                 let neighbors = world[x][y].alive_neighbors;
 
                 if world[x][y].alive {
@@ -141,6 +138,141 @@ fn the_actual_event() {
         world = next_gen;
         print(&world);
     }
+}
+
+fn add_blinker2(x: usize, y: usize, world: &mut World) {
+    world[x][y].alive = true;
+    world[x][y].display_char = 'x';
+    world[x][y + 1].alive = true;
+    world[x][y + 1].display_char = 'x';
+    world[x][y - 1].alive = true;
+    world[x][y - 1].display_char = 'x';
+}
+
+fn add_gosper_glider_gun(x: usize, y: usize, world: &mut World) {
+    world[x + 5][y + 1].alive = true;
+    world[x + 5][y + 1].display_char = 'x';
+    world[x + 5][y + 2].alive = true;
+    world[x + 5][y + 2].display_char = 'x';
+    world[x + 6][y + 1].alive = true;
+    world[x + 6][y + 1].display_char = 'x';
+    world[x + 6][y + 2].alive = true;
+    world[x + 6][y + 2].display_char = 'x';
+
+    world[x + 3][y + 13].alive = true;
+    world[x + 3][y + 13].display_char = 'x';
+    world[x + 3][y + 14].alive = true;
+    world[x + 3][y + 14].display_char = 'x';
+    world[x + 4][y + 12].alive = true;
+    world[x + 4][y + 12].display_char = 'x';
+    world[x + 4][y + 16].alive = true;
+    world[x + 4][y + 16].display_char = 'x';
+    world[x + 5][y + 11].alive = true;
+    world[x + 5][y + 11].display_char = 'x';
+    world[x + 5][y + 17].alive = true;
+    world[x + 5][y + 17].display_char = 'x';
+    world[x + 6][y + 11].alive = true;
+    world[x + 6][y + 11].display_char = 'x';
+    world[x + 6][y + 15].alive = true;
+    world[x + 6][y + 15].display_char = 'x';
+    world[x + 6][y + 17].alive = true;
+    world[x + 6][y + 17].display_char = 'x';
+    world[x + 6][y + 18].alive = true;
+    world[x + 6][y + 18].display_char = 'x';
+    world[x + 7][y + 11].alive = true;
+    world[x + 7][y + 11].display_char = 'x';
+    world[x + 7][y + 17].alive = true;
+    world[x + 7][y + 17].display_char = 'x';
+    world[x + 8][y + 12].alive = true;
+    world[x + 8][y + 12].display_char = 'x';
+    world[x + 8][y + 16].alive = true;
+    world[x + 8][y + 16].display_char = 'x';
+    world[x + 9][y + 13].alive = true;
+    world[x + 9][y + 13].display_char = 'x';
+    world[x + 9][y + 14].alive = true;
+    world[x + 9][y + 14].display_char = 'x';
+
+    world[x + 1][y + 25].alive = true;
+    world[x + 1][y + 25].display_char = 'x';
+    world[x + 2][y + 23].alive = true;
+    world[x + 2][y + 23].display_char = 'x';
+    world[x + 2][y + 25].alive = true;
+    world[x + 2][y + 25].display_char = 'x';
+    world[x + 3][y + 21].alive = true;
+    world[x + 3][y + 21].display_char = 'x';
+    world[x + 3][y + 22].alive = true;
+    world[x + 3][y + 22].display_char = 'x';
+    world[x + 4][y + 21].alive = true;
+    world[x + 4][y + 21].display_char = 'x';
+    world[x + 4][y + 22].alive = true;
+    world[x + 4][y + 22].display_char = 'x';
+    world[x + 5][y + 21].alive = true;
+    world[x + 5][y + 21].display_char = 'x';
+    world[x + 5][y + 22].alive = true;
+    world[x + 5][y + 22].display_char = 'x';
+    world[x + 6][y + 23].alive = true;
+    world[x + 6][y + 23].display_char = 'x';
+    world[x + 6][y + 25].alive = true;
+    world[x + 6][y + 25].display_char = 'x';
+    world[x + 7][y + 25].alive = true;
+    world[x + 7][y + 25].display_char = 'x';
+
+    world[x + 3][y + 35].alive = true;
+    world[x + 3][y + 35].display_char = 'x';
+    world[x + 3][y + 36].alive = true;
+    world[x + 3][y + 36].display_char = 'x';
+    world[x + 4][y + 35].alive = true;
+    world[x + 4][y + 35].display_char = 'x';
+    world[x + 4][y + 36].alive = true;
+    world[x + 4][y + 36].display_char = 'x';
+}
+
+fn add_pentadecathlon(x: usize, y: usize, world: &mut World) {
+    world[x][y + 2].alive = true;
+    world[x][y + 2].display_char = 'x';
+    world[x + 1][y + 1].alive = true;
+    world[x + 1][y + 1].display_char = 'x';
+    world[x + 1][y + 3].alive = true;
+    world[x + 1][y + 3].display_char = 'x';
+    world[x + 2][y + 1].alive = true;
+    world[x + 2][y + 1].display_char = 'x';
+    world[x + 2][y + 3].alive = true;
+    world[x + 2][y + 3].display_char = 'x';
+    world[x + 3][y + 2].alive = true;
+    world[x + 3][y + 2].display_char = 'x';
+    world[x + 4][y + 2].alive = true;
+    world[x + 4][y + 2].display_char = 'x';
+    world[x + 5][y + 1].alive = true;
+    world[x + 5][y + 1].display_char = 'x';
+    world[x + 5][y + 3].alive = true;
+    world[x + 5][y + 3].display_char = 'x';
+    world[x + 6][y + 1].alive = true;
+    world[x + 6][y + 1].display_char = 'x';
+    world[x + 6][y + 3].alive = true;
+    world[x + 6][y + 3].display_char = 'x';
+    world[x + 7][y + 2].alive = true;
+    world[x + 7][y + 2].display_char = 'x';
+}
+
+fn add_lwss(x: usize, y: usize, world: &mut World) {
+    world[x][y + 1].alive = true;
+    world[x][y + 1].display_char = 'x';
+    world[x][y + 4].alive = true;
+    world[x][y + 4].display_char = 'x';
+    world[x + 1][y].alive = true;
+    world[x + 1][y].display_char = 'x';
+    world[x + 2][y].alive = true;
+    world[x + 2][y].display_char = 'x';
+    world[x + 2][y + 4].alive = true;
+    world[x + 2][y + 4].display_char = 'x';
+    world[x + 3][y].alive = true;
+    world[x + 3][y].display_char = 'x';
+    world[x + 3][y + 1].alive = true;
+    world[x + 3][y + 1].display_char = 'x';
+    world[x + 3][y + 2].alive = true;
+    world[x + 3][y + 2].display_char = 'x';
+    world[x + 3][y + 3].alive = true;
+    world[x + 3][y + 3].display_char = 'x';
 }
 
 fn main() {
