@@ -76,10 +76,22 @@ fn stud_json_parse() -> Result<(String, String), io::Error> {
 }
 
 fn main() {
-    let (youngest, oldest) = stud_parse().unwrap();
+    let (youngest, oldest) = match stud_parse() {
+        Ok((y, o)) => (y, o),
+        Err(e) => {
+            println!("Error parsing student data: {}", e);
+            return;
+        }
+    };
     println!("The youngest student is: {}", youngest);
     println!("The oldest student is: {}", oldest);
-    let (youngest, oldest) = stud_json_parse().unwrap();
+    let (youngest, oldest) = match stud_json_parse() {
+        Ok((y, o)) => (y, o),
+        Err(e) => {
+            println!("Error parsing student data: {}", e);
+            return;
+        }
+    };
     println!("The youngest student is: {}", youngest);
     println!("The oldest student is: {}", oldest);
 }

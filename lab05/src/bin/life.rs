@@ -83,7 +83,7 @@ fn parse_into_world(world: &mut World) -> Result<World, io::Error> {
     Ok(world.clone())
 }
 
-fn print(world: &World) -> u32{
+fn print(world: &World) -> u32 {
     let mut live_cells: u32 = 0;
     for row in world.iter() {
         for element in row.iter() {
@@ -98,9 +98,16 @@ fn print(world: &World) -> u32{
 fn the_actual_event() {
     let mut world = initialize_world();
     world = parse_into_world(&mut world).unwrap();
+    if let Ok(w) = parse_into_world(&mut world) {
+        world = w;
+    }
+    else {
+        println!("Error parsing");
+        return;
+    }
     let mut generation: u64 = 0;
-    let mut live_cells:u32;
-    
+    let mut live_cells: u32;
+
     live_cells = print(&world);
     println!("Generation: {}, Live cells: {}", generation, live_cells);
     generation = 1;
