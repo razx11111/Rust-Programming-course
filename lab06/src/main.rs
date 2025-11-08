@@ -1,14 +1,14 @@
 use std::{fs, process::exit};
 
-struct PingCommand { }
+struct PingCommand {}
 
-struct CountCommand { }
+struct CountCommand {}
 
 struct TimesCommand {
-    count: usize
+    count: usize,
 }
 
-struct CatCommand { }
+struct CatCommand {}
 
 struct Terminal {
     registered_commands: Vec<Box<dyn Command>>,
@@ -16,20 +16,25 @@ struct Terminal {
 
 impl Terminal {
     fn new() -> Terminal {
-        return Terminal {
-            registered_commands: Vec::new()
+        Terminal {
+            registered_commands: Vec::new(),
         }
     }
 
-    fn register(&mut self, command:Box<dyn Command>) {
+    fn register(&mut self, command: Box<dyn Command>) {
         self.registered_commands.push(command);
     }
 
-    fn is_registered(&mut self, first_arg: &String, args: &[String]) -> bool {
+    fn is_registered(&mut self, first_arg: &str, args: &[String]) -> bool {
         for i in 0..self.registered_commands.len() {
-            if self.registered_commands[i].get_name().to_string().to_ascii_lowercase() == *first_arg {
+            if self.registered_commands[i]
+                .get_name()
+                .to_string()
+                .to_ascii_lowercase()
+                == *first_arg
+            {
                 self.registered_commands[i].exec(args);
-                return true
+                return true;
             }
         }
         println!("Invalid Command");
@@ -44,10 +49,10 @@ impl Terminal {
                 println!("empty line");
                 continue;
             }
-            let cmd_name = &parts[0];
+            let cmd_name: &str = &parts[0];
             let args = &parts[1..];
-            
-            if cmd_name.to_ascii_lowercase() == "stop" {
+
+            if cmd_name.eq_ignore_ascii_case("stop") {
                 println!("Process stopped");
                 exit(0);
             }
@@ -55,7 +60,6 @@ impl Terminal {
             self.is_registered(cmd_name, args);
         }
     }
-
 }
 
 trait Command {
@@ -77,7 +81,7 @@ impl Command for CountCommand {
         "count"
     }
     fn exec(&mut self, str: &[String]) {
-        let mut i:u8 = 0;
+        let mut i: u8 = 0;
         for _s in str.iter() {
             i += 1;
         }
@@ -90,7 +94,7 @@ impl Command for TimesCommand {
         "times"
     }
     fn exec(&mut self, _str: &[String]) {
-        self.count += 1; 
+        self.count += 1;
         println!("Been called {} times", self.count);
     }
 }
@@ -100,8 +104,19 @@ impl Command for CatCommand {
         "cat"
     }
     fn exec(&mut self, str: &[String]) {
-        // let path:String = String::from("./");
-        // path.push_str(new)
+        let mut path = String::from("src/");
+        let actual_path = match str.first() {
+            Some(p) => p,
+            None => &" ".to_string(),
+        };
+
+        path.push_str(actual_path);
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => format!("{e} dw abt it lil bro"),
+        };
+
+        println!("{content}");
     }
 }
 
@@ -111,6 +126,7 @@ fn main() {
     terminal.register(Box::new(PingCommand {}));
     terminal.register(Box::new(CountCommand {}));
     terminal.register(Box::new(TimesCommand { count: 0 }));
+    terminal.register(Box::new(CatCommand {}));
 
     terminal.run();
 }

@@ -10,5 +10,7 @@ count a             b
 times
 times
 times abc
-cat ./test_P1.txt
+cat command_list.txt
+cat r
+cat 
 stop
