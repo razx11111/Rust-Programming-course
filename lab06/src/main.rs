@@ -113,7 +113,7 @@ impl Command for CatCommand {
         path.push_str(actual_path);
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
-            Err(e) => format!("{e} dw abt it lil bro"),
+            Err(e) => format!("cat error: {e} dw abt it lil bro"),
         };
 
         println!("{content}");
