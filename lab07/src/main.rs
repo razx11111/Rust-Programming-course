@@ -1,5 +1,5 @@
 use std::fmt;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Mul, Neg, Sub, AddAssign, SubAssign, MulAssign};
 
 fn eq_rel(x: f64, y: f64) -> bool {
     (x - y).abs() < 0.001
@@ -122,6 +122,24 @@ impl Neg for Complex {
     }
 }
 
+impl AddAssign for Complex {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl SubAssign for Complex {
+    fn sub_assign(&mut self, other: Self) {
+        *self = *self - other;
+    }
+}
+
+impl MulAssign for Complex {
+    fn mul_assign(&mut self, other: Self) {
+        *self = *self * other;
+    }
+}
+
 fn main() {
     let a = Complex::new(1.0, 2.0);
     assert_eq_rel!(a.real, 1);
@@ -155,6 +173,18 @@ fn main() {
     let j = -i + i;
     assert_eq_rel!(j.real, 0);
     assert_eq_rel!(j.imag, 0);
+
+    let mut x = Complex::new(1, 2);
+    x += Complex::new(3, 4);
+    assert_eq!(x, Complex::new(4, 6));
+
+    let mut y = Complex::new(5, 6);
+    y -= Complex::new(2, 3);
+    assert_eq!(y, Complex::new(3, 3));
+
+    let mut z = Complex::new(1, 2);
+    z *= Complex::new(2, 3);
+    assert_eq!(z, Complex::new(-4, 7)); 
 
     println!("ok!");
 }
