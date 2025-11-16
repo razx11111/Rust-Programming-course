@@ -82,12 +82,12 @@ impl Sub for Complex {
 
 impl<T> Mul<T> for Complex
 where
-    T: Into<Complex>,
+    Complex: From<T>,
 {
     type Output = Complex;
 
     fn mul(self, rhs: T) -> Self::Output {
-        let rhs = rhs.into();
+        let rhs = Complex::from(rhs);
         Complex {
             real: self.real * rhs.real - self.imag * rhs.imag,
             imag: self.real * rhs.imag + self.imag * rhs.real,
