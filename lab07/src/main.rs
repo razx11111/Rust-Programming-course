@@ -1,5 +1,5 @@
-use std::ops::{Add, Sub, Mul, Neg};
 use std::fmt;
+use std::ops::{Add, Mul, Neg, Sub};
 
 fn eq_rel(x: f64, y: f64) -> bool {
     (x - y).abs() < 0.001
@@ -17,21 +17,25 @@ macro_rules! assert_eq_rel {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 struct Complex {
-    real : f64,
-    imag : f64
+    real: f64,
+    imag: f64,
 }
 
 impl Complex {
-    fn new<R, I> (real : R, imag: I) -> Self 
-    where 
-        f64: From<R> + From<I> {
-        Self { real: f64::from(real), imag: f64::from(imag), }
-    } 
+    fn new<R, I>(real: R, imag: I) -> Self
+    where
+        f64: From<R> + From<I>,
+    {
+        Self {
+            real: f64::from(real),
+            imag: f64::from(imag),
+        }
+    }
 
     fn conjugate(&self) -> Self {
         Self {
-            real : self.real,
-            imag : -self.imag
+            real: self.real,
+            imag: -self.imag,
         }
     }
 }
@@ -74,8 +78,8 @@ impl Sub for Complex {
 
     fn sub(self, rhs: Complex) -> Self::Output {
         Complex {
-            real : self.real - rhs.real,
-            imag : self.imag - rhs.imag,
+            real: self.real - rhs.real,
+            imag: self.imag - rhs.imag,
         }
     }
 }
@@ -154,4 +158,3 @@ fn main() {
 
     println!("ok!");
 }
-
