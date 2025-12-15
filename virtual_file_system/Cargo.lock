@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "VirtualFileManager"
+name = "virtual_file_manager"
 version = "0.1.0"
