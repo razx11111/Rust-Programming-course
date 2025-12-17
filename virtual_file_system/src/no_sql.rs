@@ -54,9 +54,9 @@ impl<'a> Decoder<'a> {
         let end = self
             .poz
             .checked_add(n)
-            .ok_or_else(|| VfsError::Corrupt("decoder position overflow".to_string()))?;
+            .ok_or_else(|| VfsError::CorruptLog("decoder position overflow".to_string()))?;
         if end > self.input.len() {
-            return Err(VfsError::Corrupt(
+            return Err(VfsError::CorruptLog(
                 "unexpected EOF while decoding".to_string(),
             ));
         }
@@ -98,7 +98,7 @@ impl<'a> Decoder<'a> {
         let b = self.get_bytes()?;
         std::str::from_utf8(b)
             .map(|s| s.to_string())
-            .map_err(|_| VfsError::Corrupt("invalid utf-8 string in snapshot".to_string()))
+            .map_err(|_| VfsError::CorruptLog("invalid utf-8 string in snapshot".to_string()))
     }
 
     pub fn is_eof(&self) -> bool {

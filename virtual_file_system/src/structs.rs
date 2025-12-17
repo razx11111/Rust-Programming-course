@@ -1,6 +1,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub const DEFAULT_BLOCK_SIZE: u32 = 4096;
+
+/// normalized timestamp representation stored as UNIX nanoseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timestamp(pub i128);
 
 impl Timestamp {
@@ -10,23 +13,29 @@ impl Timestamp {
 }
 
 impl From<SystemTime> for Timestamp {
-    fn from(t: SystemTime) -> Self {
-        let dur = t.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
-        let nanos = dur.as_secs() as i128 * 1_000_000_000i128 + dur.subsec_nanos() as i128;
-        Timestamp(nanos)
+    fn from(value: SystemTime) -> Self {
+        match value.duration_since(UNIX_EPOCH) {
+            Ok(dur) => Timestamp(dur.as_nanos() as i128),
+            Err(err) => {
+                let dur: Duration = err.duration();
+                Timestamp(-(dur.as_nanos() as i128))
+            }
+        }
     }
 }
 
 impl From<Timestamp> for SystemTime {
-    fn from(t: Timestamp) -> Self {
-        if t.0 <= 0 {
-            return UNIX_EPOCH;
+    fn from(value: Timestamp) -> Self {
+        if value.0 >= 0 {
+            UNIX_EPOCH + Duration::from_nanos(value.0 as u64)
+        } else {
+            UNIX_EPOCH - Duration::from_nanos((-value.0) as u64)
         }
-        let secs = (t.0 / 1_000_000_000i128) as u64;
-        let nanos = (t.0 % 1_000_000_000i128) as u32;
-        UNIX_EPOCH + Duration::new(secs, nanos)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InodeId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
@@ -36,16 +45,108 @@ pub enum NodeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
-    pub kind: NodeKind,
     pub size: u64,
-    pub created: Timestamp,
-    pub modified: Timestamp,
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
 }
 
+/// logical range pointing to bytes inside the backing file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Extent {
+    /// logical offset within the file.
+    pub logical_offset: u64,
+    /// offset inside the backing store where this extent begins.
+    pub file_offset: u64,
+    pub len: u64,
+}
+
+/// file data is stored as a set of extents.
+pub type ExtentList = Vec<Extent>;
+
+/// on-disk directory entry metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
-    pub path: String,
+    pub parent: InodeId,
+    pub inode: InodeId,
+    pub name: String,
+    pub kind: NodeKind,
+}
+
+/// in-memory inode representation reconstructed during mount/replay.
+#[derive(Debug, Clone)]
+pub struct Inode {
+    pub id: InodeId,
+    pub parent: Option<InodeId>,
+    pub name: String,
+    pub kind: NodeKind,
     pub metadata: Metadata,
+    pub extents: ExtentList,
+}
+
+/// header persisted at the start of the backing file.
+#[derive(Debug, Clone)]
+pub struct Header {
+    pub magic: [u8; 8],
+    pub version: u32,
+    pub block_size: u32,
+    pub root: InodeId,
+}
+
+/// snapshot of the free list and inode table used to accelerate mounts.
+#[derive(Debug, Clone)]
+pub struct Checkpoint {
+    pub next_inode: InodeId,
+    pub free_extents: ExtentList,
+    pub inodes: Vec<InodeSnapshot>,
+}
+
+/// inode snapshot persisted in checkpoints.
+#[derive(Debug, Clone)]
+pub struct InodeSnapshot {
+    pub id: InodeId,
+    pub parent: Option<InodeId>,
+    pub name: String,
+    pub kind: NodeKind,
+    pub metadata: Metadata,
+    pub extents: ExtentList,
+}
+
+///operations persisted in the log
+#[derive(Debug, Clone)]
+pub enum Record {
+    Header(Header),
+    Checkpoint(Checkpoint),
+    InodeAlloc(InodeSnapshot),
+    DirEntryAdd {
+        entry: DirEntry,
+    },
+    DirEntryRemove {
+        parent: InodeId,
+        name: String,
+        inode: InodeId,
+    },
+    DataWrite {
+        inode: InodeId,
+        logical_offset: u64,
+        len: u64,
+        checksum: u32,
+    },
+    Truncate {
+        inode: InodeId,
+        len: u64,
+    },
+    SetTimes {
+        inode: InodeId,
+        created_at: Option<Timestamp>,
+        modified_at: Option<Timestamp>,
+    },
+    Rename {
+        inode: InodeId,
+        old_parent: InodeId,
+        new_parent: InodeId,
+        old_name: String,
+        new_name: String,
+    },
 }
 
 #[derive(Debug)]
@@ -55,7 +156,7 @@ pub enum VfsError {
     NotAFile(String),
     NotADir(String),
     InvalidPath(String),
-    Corrupt(String),
+    CorruptLog(String),
     UnsupportedVersion(u32),
     Io(std::io::Error),
 }
@@ -68,18 +169,16 @@ impl std::fmt::Display for VfsError {
             VfsError::NotAFile(p) => write!(f, "not a file: {p}"),
             VfsError::NotADir(p) => write!(f, "not a dir: {p}"),
             VfsError::InvalidPath(p) => write!(f, "invalid path: {p}"),
-            VfsError::Corrupt(m) => write!(f, "corrupt vfs: {m}"),
+            VfsError::CorruptLog(m) => write!(f, "corrupt log: {m}"),
             VfsError::UnsupportedVersion(v) => write!(f, "unsupported version: {v}"),
             VfsError::Io(e) => write!(f, "io error: {e}"),
         }
     }
 }
 
-impl std::error::Error for VfsError {}
-
 impl From<std::io::Error> for VfsError {
-    fn from(e: std::io::Error) -> Self {
-        VfsError::Io(e)
+    fn from(err: std::io::Error) -> Self {
+        VfsError::Io(err)
     }
 }
 
