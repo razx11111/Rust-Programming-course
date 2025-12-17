@@ -1,5 +1,14 @@
-use crate::structs::{Result, VfsError};
+use crate::structs::{Result, VfsError, Header, InodeId, Extent, ExtentList};
 use crc32fast::Hasher;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use crate::structs::{InodeSnapshot, Metadata, NodeKind, Timestamp};
+
+const RECORD_MAGIC: &[u8; 4] = b"VFSR";
+const HEADER_MAGIC: &[u8; 8] = b"RVFS0001";
+const VERSION: u32 = 1;
+const HEADER_LEN: u64 = 8 + 4 + 4 + 8; //aproape cum aveam pt superblock
+
 pub struct Encoder {
     buf: Vec<u8>,
 }
@@ -110,4 +119,122 @@ pub fn crc32(data: &[u8]) -> u32 {
     let mut hasher = Hasher::new();
     hasher.update(data);
     hasher.finalize()
+}
+
+pub fn write_header(file: &mut File, block_size: u32, root: InodeId) -> Result<()> {
+    let mut e = Encoder::new();
+    e.buf.extend_from_slice(HEADER_MAGIC);
+    e.put_u32(VERSION);
+    e.put_u32(block_size);
+    e.put_u64(root.0);
+
+    let bytes = e.into_inner();
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&bytes)?;
+    file.flush()?;
+    Ok(())
+}
+
+pub fn read_header(file: &mut File) -> Result<Header> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut buf = vec![0u8; HEADER_LEN as usize];
+    file.read_exact(&mut buf)?;
+
+    if &buf[0..8] != HEADER_MAGIC {
+        return Err(VfsError::CorruptLog("invalid header magic".into()));
+    }
+    let mut d = Decoder::new(&buf[8..]);
+    let version = d.get_u32()?;
+    if version != VERSION {
+        return Err(VfsError::UnsupportedVersion(version));
+    }
+    let block_size = d.get_u32()?;
+    let root = InodeId(d.get_u64()?);
+
+    Ok(Header {
+        magic: *HEADER_MAGIC,
+        version,
+        block_size,
+        root,
+    })
+}
+
+fn encode_extent(e: &mut Encoder, ex: &Extent) {
+    e.put_u64(ex.logical_offset);
+    e.put_u64(ex.file_offset);
+    e.put_u64(ex.len);
+}
+
+fn decode_extent(d: &mut Decoder<'_>) -> Result<Extent> {
+    Ok(Extent {
+        logical_offset: d.get_u64()?,
+        file_offset: d.get_u64()?,
+        len: d.get_u64()?,
+    })
+}
+
+fn encode_inode_snapshot(e: &mut Encoder, snap: &InodeSnapshot) {
+    e.put_u64(snap.id.0);
+
+    // parent: Option<InodeId>
+    match snap.parent {
+        Some(p) => { e.put_u8(1); e.put_u64(p.0); }
+        None => e.put_u8(0),
+    }
+
+    e.put_string(&snap.name);
+
+    // kind
+    e.put_u8(match snap.kind {
+        NodeKind::File => 1,
+        NodeKind::Dir => 2,
+    });
+
+    // metadata
+    e.put_u64(snap.metadata.size);
+    e.put_i128(snap.metadata.created_at.0);
+    e.put_i128(snap.metadata.modified_at.0);
+
+    // extents
+    e.put_u64(snap.extents.len() as u64);
+    for ex in &snap.extents {
+        encode_extent(e, ex);
+    }
+}
+
+fn decode_inode_snapshot(d: &mut Decoder<'_>) -> Result<InodeSnapshot> {
+    let id = InodeId(d.get_u64()?);
+
+    let parent = match d.get_u8()? {
+        0 => None,
+        1 => Some(InodeId(d.get_u64()?)),
+        _ => return Err(VfsError::CorruptLog("invalid parent tag".into())),
+    };
+
+    let name = d.get_string()?;
+
+    let kind = match d.get_u8()? {
+        1 => NodeKind::File,
+        2 => NodeKind::Dir,
+        _ => return Err(VfsError::CorruptLog("invalid inode kind".into())),
+    };
+
+    let size = d.get_u64()?;
+    let created_at = Timestamp(d.get_i128()?);
+    let modified_at = Timestamp(d.get_i128()?);
+
+    let extent_count = d.get_u64()? as usize;
+    let mut extents: ExtentList = Vec::with_capacity(extent_count);
+    for _ in 0..extent_count {
+        extents.push(decode_extent(d)?);
+    }
+
+    Ok(InodeSnapshot {
+        id,
+        parent,
+        name,
+        kind,
+        metadata: Metadata { size, created_at, modified_at },
+        extents,
+    })
 }
