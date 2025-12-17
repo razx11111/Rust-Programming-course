@@ -1,7 +1,7 @@
+use crate::structs::{Result, VfsError};
 use crc32fast::Hasher;
-use crate::structs::{VfsError, Result};
 pub struct Encoder {
-    buf: Vec<u8> 
+    buf: Vec<u8>,
 }
 
 impl Encoder {
@@ -51,11 +51,14 @@ impl<'a> Decoder<'a> {
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let end = self.poz.checked_add(n).ok_or_else(|| {
-            VfsError::Corrupt("decoder position overflow".to_string())
-        })?;
+        let end = self
+            .poz
+            .checked_add(n)
+            .ok_or_else(|| VfsError::Corrupt("decoder position overflow".to_string()))?;
         if end > self.input.len() {
-            return Err(VfsError::Corrupt("unexpected EOF while decoding".to_string()));
+            return Err(VfsError::Corrupt(
+                "unexpected EOF while decoding".to_string(),
+            ));
         }
         let out = &self.input[self.poz..end];
         self.poz = end;
@@ -81,8 +84,8 @@ impl<'a> Decoder<'a> {
     pub fn get_i128(&mut self) -> Result<i128> {
         let b = self.take(16)?;
         Ok(i128::from_le_bytes([
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-            b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15],
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
+            b[14], b[15],
         ]))
     }
 
