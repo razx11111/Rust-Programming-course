@@ -2,7 +2,7 @@ use crate::structs::{Result, VfsError, Header, InodeId, Extent, ExtentList};
 use crc32fast::Hasher;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use crate::structs::{InodeSnapshot, Metadata, NodeKind, Timestamp};
+use crate::structs::{InodeSnapshot, Metadata, NodeKind, Timestamp, DirEntry};
 
 const RECORD_MAGIC: &[u8; 4] = b"VFSR";
 const HEADER_MAGIC: &[u8; 8] = b"RVFS0001";
@@ -238,3 +238,26 @@ fn decode_inode_snapshot(d: &mut Decoder<'_>) -> Result<InodeSnapshot> {
         extents,
     })
 }
+
+fn encode_dir_entry(e: &mut Encoder, de: &DirEntry) {
+    e.put_u64(de.parent.0);
+    e.put_u64(de.inode.0);
+    e.put_string(&de.name);
+    e.put_u8(match de.kind {
+        NodeKind::File => 1,
+        NodeKind::Dir => 2,
+    });
+}
+
+fn decode_dir_entry(d: &mut Decoder<'_>) -> Result<DirEntry> {
+    let parent = InodeId(d.get_u64()?);
+    let inode = InodeId(d.get_u64()?);
+    let name = d.get_string()?;
+    let kind = match d.get_u8()? {
+        1 => NodeKind::File,
+        2 => NodeKind::Dir,
+        _ => return Err(VfsError::CorruptLog("invalid dir entry kind".into())),
+    };
+    Ok(DirEntry { parent, inode, name, kind })
+}
+
