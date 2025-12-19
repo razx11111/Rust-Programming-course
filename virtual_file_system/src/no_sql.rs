@@ -1,13 +1,13 @@
 use crate::structs::{Result, VfsError, Header, InodeId, Extent, ExtentList};
 use crc32fast::Hasher;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use crate::structs::{InodeSnapshot, Metadata, NodeKind, Timestamp, DirEntry};
+use crate::structs::{InodeSnapshot, Metadata, NodeKind, Timestamp, DirEntry, Record};
 
 const RECORD_MAGIC: &[u8; 4] = b"VFSR";
-const HEADER_MAGIC: &[u8; 8] = b"RVFS0001";
+const HEADER_MAGIC: &[u8; 8] = &[67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8];
 const VERSION: u32 = 1;
-const HEADER_LEN: u64 = 8 + 4 + 4 + 8; //aproape cum aveam pt superblock
+const HEADER_LEN: u64 = 24; //aproape cum aveam pt superblock 8 magic 4 version 4 bsize 8 root
 
 pub struct Encoder {
     buf: Vec<u8>,
@@ -261,3 +261,122 @@ fn decode_dir_entry(d: &mut Decoder<'_>) -> Result<DirEntry> {
     Ok(DirEntry { parent, inode, name, kind })
 }
 
+pub fn write_record(file: &mut File, record: &Record) -> Result<u64> {
+    let mut e = Encoder::new();
+
+    match record {
+        Record::InodeAlloc(snap) => {
+            e.put_u8(1);
+            encode_inode_snapshot(&mut e, snap);
+        }
+        Record::DirEntryAdd { entry } => {
+            e.put_u8(2);
+            encode_dir_entry(&mut e, entry);
+        }
+        _ => {
+            return Err(VfsError::CorruptLog(
+                "write_record: record not implemented yet".into(),
+            ));
+        } 
+    }
+
+    let payload = e.into_inner();
+    let payload_len = payload.len() as u64;
+
+    let mut scratch = Vec::with_capacity(12 + payload.len());
+    scratch.extend_from_slice(RECORD_MAGIC);
+    scratch.extend_from_slice(&payload_len.to_le_bytes());
+    scratch.extend_from_slice(&payload);
+
+    let header_crc = crc32(&scratch);
+
+    let off = file.seek(SeekFrom::End(0))?;
+    file.write_all(&scratch)?;
+    file.write_all(&header_crc.to_le_bytes())?;
+    file.flush()?;
+
+    Ok(off)
+}
+
+pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(Record, u64)>> {
+    file.seek(SeekFrom::Start(offset))?;
+
+    let mut magic = [0u8; 4];
+    if file.read_exact(&mut magic).is_err() {
+        return Ok(None);
+    }
+    if &magic != RECORD_MAGIC {
+        return Err(VfsError::CorruptLog("bad record magic".into()));
+    }
+
+    let mut len_buf = [0u8; 8];
+    file.read_exact(&mut len_buf)?;
+    let payload_len = u64::from_le_bytes(len_buf);
+
+    let mut payload = vec![0u8; payload_len as usize];
+    if file.read_exact(&mut payload).is_err() {
+        return Ok(None);
+    }
+
+    let mut crc_buf = [0u8; 4];
+    if file.read_exact(&mut crc_buf).is_err() {
+        return Ok(None);
+    }
+    let expected = u32::from_le_bytes(crc_buf);
+
+    let mut scratch = Vec::with_capacity(12 + payload.len());
+    scratch.extend_from_slice(RECORD_MAGIC);
+    scratch.extend_from_slice(&payload_len.to_le_bytes());
+    scratch.extend_from_slice(&payload);
+
+    let got = crc32(&scratch);
+    if got != expected {
+        return Ok(None);
+    }
+
+    let mut d = Decoder::new(&payload);
+    let tag = d.get_u8()?;
+
+    let rec = match tag {
+        1 => Record::InodeAlloc(decode_inode_snapshot(&mut d)?),
+        2 => Record::DirEntryAdd { entry: decode_dir_entry(&mut d)? },
+        _ => return Err(VfsError::CorruptLog("unknown record tag".into())),
+    };
+
+    if !d.is_eof() {
+        return Err(VfsError::CorruptLog("record trailing bytes".into()));
+    }
+
+    let next_offset = offset + 4 + 8 + payload_len + 4;
+    Ok(Some((rec, next_offset)))
+}
+
+#[test]
+fn record_roundtrip_inode_alloc() {
+    let path = "target/test_log.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut f = OpenOptions::new().create(true).read(true).write(true).open(path).unwrap();
+
+    write_header(&mut f, 4096, InodeId(1)).unwrap();
+
+    let now = Timestamp::now();
+    let snap = InodeSnapshot {
+        id: InodeId(1),
+        parent: None,
+        name: "".to_string(),
+        kind: NodeKind::Dir,
+        metadata: Metadata { size: 0, created_at: now, modified_at: now },
+        extents: vec![],
+    };
+
+    write_record(&mut f, &Record::InodeAlloc(snap)).unwrap();
+
+    let off:u32 = 8 + 4 + 4 + 8;
+    let got = read_next_record(&mut f, off as u64).unwrap().unwrap().0;
+
+    match got {
+        Record::InodeAlloc(s) => assert_eq!(s.id.0, 1),
+        _ => panic!("wrong record"),
+    }
+}
