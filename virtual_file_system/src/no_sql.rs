@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use crate::structs::{InodeSnapshot, Metadata, NodeKind, Timestamp, DirEntry, Record};
 
 const RECORD_MAGIC: &[u8; 4] = b"VFSR";
-const HEADER_MAGIC: &[u8; 8] = &[67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8];
+const HEADER_MAGIC: &[u8; 8] = &[67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8]; 
 const VERSION: u32 = 1;
 const HEADER_LEN: u64 = 24; //aproape cum aveam pt superblock 8 magic 4 version 4 bsize 8 root
 
@@ -356,9 +356,15 @@ fn record_roundtrip_inode_alloc() {
     let path = "target/test_log.vfs";
     let _ = std::fs::remove_file(path);
 
-    let mut f = OpenOptions::new().create(true).read(true).write(true).open(path).unwrap();
+    let mut f = match OpenOptions::new().create(true).read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(e) => panic!("failed to create test log file: {}", e),
+    };
 
-    write_header(&mut f, 4096, InodeId(1)).unwrap();
+    match write_header(&mut f, 4096, InodeId(1)){
+        Ok(_) => {},
+        Err(e) => panic!("failed to write header: {}", e),
+    };
 
     let now = Timestamp::now();
     let snap = InodeSnapshot {
@@ -370,10 +376,17 @@ fn record_roundtrip_inode_alloc() {
         extents: vec![],
     };
 
-    write_record(&mut f, &Record::InodeAlloc(snap)).unwrap();
+    match write_record(&mut f, &Record::InodeAlloc(snap)) {
+        Ok(_) => {},
+        Err(e) => panic!("failed to write record: {}", e),
+    };
 
     let off:u32 = 8 + 4 + 4 + 8;
-    let got = read_next_record(&mut f, off as u64).unwrap().unwrap().0;
+    let got = match read_next_record(&mut f, off as u64) {
+        Ok(Some((rec, _))) => rec,
+        Ok(None) => panic!("no record found"),
+        Err(e) => panic!("failed to read record: {}", e),
+    };
 
     match got {
         Record::InodeAlloc(s) => assert_eq!(s.id.0, 1),
