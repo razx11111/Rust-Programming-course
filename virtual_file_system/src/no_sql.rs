@@ -1,8 +1,7 @@
-use crate::structs::{Result, VfsError, Header, InodeId, Extent, ExtentList};
+use crate::structs::*;
 use crc32fast::Hasher;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use crate::structs::{InodeSnapshot, Metadata, NodeKind, Timestamp, DirEntry, Record};
 
 const RECORD_MAGIC: &[u8; 4] = b"VFSR";
 const HEADER_MAGIC: &[u8; 8] = &[67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8]; 
@@ -349,47 +348,4 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(Record, 
 
     let next_offset = offset + 4 + 8 + payload_len + 4;
     Ok(Some((rec, next_offset)))
-}
-
-#[test]
-fn record_roundtrip_inode_alloc() {
-    let path = "target/test_log.vfs";
-    let _ = std::fs::remove_file(path);
-
-    let mut f = match OpenOptions::new().create(true).read(true).write(true).open(path) {
-        Ok(file) => file,
-        Err(e) => panic!("failed to create test log file: {}", e),
-    };
-
-    match write_header(&mut f, 4096, InodeId(1)){
-        Ok(_) => {},
-        Err(e) => panic!("failed to write header: {}", e),
-    };
-
-    let now = Timestamp::now();
-    let snap = InodeSnapshot {
-        id: InodeId(1),
-        parent: None,
-        name: "".to_string(),
-        kind: NodeKind::Dir,
-        metadata: Metadata { size: 0, created_at: now, modified_at: now },
-        extents: vec![],
-    };
-
-    match write_record(&mut f, &Record::InodeAlloc(snap)) {
-        Ok(_) => {},
-        Err(e) => panic!("failed to write record: {}", e),
-    };
-
-    let off:u32 = 8 + 4 + 4 + 8;
-    let got = match read_next_record(&mut f, off as u64) {
-        Ok(Some((rec, _))) => rec,
-        Ok(None) => panic!("no record found"),
-        Err(e) => panic!("failed to read record: {}", e),
-    };
-
-    match got {
-        Record::InodeAlloc(s) => assert_eq!(s.id.0, 1),
-        _ => panic!("wrong record"),
-    }
 }

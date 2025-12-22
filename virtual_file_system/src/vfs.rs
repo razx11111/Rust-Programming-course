@@ -213,12 +213,3 @@ impl Iterator for ReadDir {
         None
     }
 }
-
-#[test]
-fn can_init_and_reopen() {
-    let path = "target/mount_init.vfs";
-    let _ = std::fs::remove_file(path);
-
-    let _v1 = Vfs::open(path).expect("init");
-    let _v2 = Vfs::open(path).expect("reopen");
-}

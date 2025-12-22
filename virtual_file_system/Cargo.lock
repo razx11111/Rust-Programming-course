@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "virtual_file_manager"
+name = "virtual_file_system"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
