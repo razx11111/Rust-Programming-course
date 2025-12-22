@@ -1,6 +1,6 @@
-use std::fs::{self, OpenOptions};
+use std::fs::{OpenOptions};
 use virtual_file_system::no_sql::{read_next_record, write_header, write_record};
-use virtual_file_system::structs::{InodeId, InodeSnapshot, Metadata, NodeKind, Record, Timestamp};
+use virtual_file_system::structs::*;
 use virtual_file_system::Vfs;
 
 #[test]
@@ -53,4 +53,29 @@ fn can_init_and_reopen() {
 
     let _v1 = Vfs::open(path).expect("init");
     let _v2 = Vfs::open(path).expect("reopen");
+}
+
+#[test]
+fn create_dir_check_reopen() {
+    let path = "target/dirs.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut v1 = match Vfs::open(path) {
+        Err(e) => panic!("init failed: {:?}", e),
+        Ok(vfs) => vfs,
+    };
+    match v1.create_dir("rs") {
+        Err(e) => panic!("create_dir failed: {:?}", e),
+        Ok(_) => {},
+    };
+
+    // reopen -> replay
+    let mut v2  = match  Vfs::open(path) {
+        Err(e) => panic!("reopen failed: {:?}", e),
+        Ok(vfs) => vfs,
+    };
+    // încercăm să creăm iar -> AlreadyExists
+    let err = v2.create_dir("rs").unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("already exists"));
 }

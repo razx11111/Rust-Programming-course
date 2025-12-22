@@ -105,13 +105,29 @@ impl Vfs {
             inner: Rc::new(RefCell::new(inner)),
         })
     }
+
+    fn split_path(path: &str) -> Result<Vec<&str>> {
+        if path.is_empty() {
+            return Err(VfsError::InvalidPath("empty path".into()));
+        }
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.iter().any(|p| p.is_empty() || *p == "." || *p == "..") {
+            return Err(VfsError::InvalidPath(format!("invalid path: {path}")));
+        }
+        Ok(parts)
+    }
+
+    pub fn create_dir(&mut self, path: &str) -> Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        inner.create_dir(path)
+    }
 }
 
 impl Inner {
     fn mount_replay(&mut self) -> Result<()> {
         // logu incepe dupa header
         // trebuie să fie exact aceeași constantă ca în no_sql
-        let mut offset: u64 = 8 + 4 + 4 + 8;
+        let mut offset: u64 = 24;
 
         // mergem record cu record până când read_next_record spune None
         // None = EOF sau tail incomplet 
@@ -174,7 +190,7 @@ impl Inner {
 
     fn apply_dir_entry_add(&mut self, entry: &DirEntry) -> Result<()> {
         // verificăm parent există și e dir
-        let parent = self
+        let parent: &Inode = self
             .inodes
             .get(&entry.parent)
             .ok_or_else(|| VfsError::CorruptLog("direntry add parent missing".into()))?;
@@ -202,6 +218,90 @@ impl Inner {
         }
 
         self.children.insert(key, entry.inode);
+        Ok(())
+    }
+
+    fn path_to_inode(&self, path: &str) -> Result<InodeId> {
+        let parts = Vfs::split_path(path)?;
+        let mut cur = self.header.root;
+
+        for name in parts {
+            let key = (cur, name.to_string());
+            let next = self
+                .children
+                .get(&key)
+                .copied()
+                .ok_or_else(|| VfsError::NotFound(path.into()))?;
+            cur = next;
+        }
+        Ok(cur)
+    }
+
+    fn create_dir(&mut self, path: &str) -> Result<()> {
+        let parts = Vfs::split_path(path)?;
+        let (parent_parts, leaf) = parts.split_at(parts.len() - 1);
+        let name = leaf[0];
+
+        // parent inode
+        let parent = if parent_parts.is_empty() {
+            self.header.root
+        } else {
+            let mut cur = self.header.root;
+            for p in parent_parts {
+                let key = (cur, (*p).to_string());
+                cur = *self.children.get(&key).ok_or_else(|| VfsError::NotFound(path.into()))?;
+            }
+            cur
+        };
+
+        // verificare ca parintele sa fie folder
+        let p_inode = self
+            .inodes
+            .get(&parent)
+            .ok_or_else(|| VfsError::CorruptLog("parent inode missing".into()))?;
+        if p_inode.kind != NodeKind::Dir {
+            return Err(VfsError::NotADir(format!("{path}")));
+        }
+
+        // există deja în parent -> AlreadyExists
+        let key = (parent, name.to_string());
+        if self.children.contains_key(&key) {
+            return Err(VfsError::AlreadyExists(path.into()));
+        }
+
+        // inode nou pentru director
+        let new_id = self.next_inode;
+        self.next_inode = InodeId(self.next_inode.0 + 1);
+
+        let now = Timestamp::now();
+        let snap = InodeSnapshot {
+            id: new_id,
+            parent: Some(parent),
+            name: name.to_string(),
+            kind: NodeKind::Dir,
+            metadata: Metadata {
+                size: 0,
+                created_at: now,
+                modified_at: now,
+            },
+            extents: vec![],
+        };
+
+        // scriem record-uri în log 
+        // scriem pe disk înainte să modificăm definitiv structurile 
+        write_record(&mut self.file, &Record::InodeAlloc(snap.clone()))?;
+
+        let de = DirEntry {
+            parent,
+            inode: new_id,
+            name: name.to_string(),
+            kind: NodeKind::Dir,
+        };
+        write_record(&mut self.file, &Record::DirEntryAdd { entry: de.clone() })?;
+
+        self.apply_record(&Record::InodeAlloc(snap))?;
+        self.apply_record(&Record::DirEntryAdd { entry: de })?;
+
         Ok(())
     }
 }
