@@ -79,3 +79,34 @@ fn create_dir_check_reopen() {
     let msg = format!("{err}");
     assert!(msg.contains("already exists"));
 }
+
+#[test]
+fn read_dir_lists_children() {
+    let path = "target/readdir.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut v = match Vfs::open(path) {
+        Err(e) => panic!("init failed: {:?}", e),
+        Ok(vfs) => vfs,
+    };
+    match v.create_dir("rs") {
+        Err(e) => panic!("create_dir failed: {:?}", e),
+        Ok(_) => {},
+    };
+    match v.create_dir("rs/a") {
+        Err(e) => panic!("create_dir failed: {:?}", e),
+        Ok(_) => {},
+    };
+    match v.create_dir("rs/b") {
+        Err(e) => panic!("create_dir failed: {:?}", e),
+        Ok(_) => {},
+    };
+
+    let mut names = vec![];
+    for e in v.read_dir("rs").unwrap() {
+        let e = e.unwrap();
+        names.push(e.name);
+    }
+    names.sort();
+    assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+}

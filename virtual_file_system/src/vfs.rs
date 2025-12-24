@@ -16,7 +16,8 @@ pub struct Vfs {
 }
 
 pub struct ReadDir {
-    _private: (),
+    entries: Vec<DirEntry>,
+    pos: usize,
 }
 
 pub(crate) struct Inner {
@@ -120,6 +121,11 @@ impl Vfs {
     pub fn create_dir(&mut self, path: &str) -> Result<()> {
         let mut inner = self.inner.borrow_mut();
         inner.create_dir(path)
+    }
+
+    pub fn read_dir(&self, path: &str) -> Result<ReadDir> {
+        let inner = self.inner.borrow();
+        inner.read_dir(path)
     }
 }
 
@@ -304,12 +310,60 @@ impl Inner {
 
         Ok(())
     }
+
+    fn read_dir(&self, path: &str) -> Result<ReadDir> {
+        // determinăm inode-ul directorului "" inseamna ca e root idk daca o sa schimb asta
+        let dir_id = if path.is_empty() {
+            self.header.root
+        } else {
+            self.path_to_inode(path)?
+        };
+
+        // verificăm că e director
+        let inode = self
+            .inodes
+            .get(&dir_id)
+            .ok_or_else(|| VfsError::NotFound(path.into()))?;
+
+        if inode.kind != NodeKind::Dir {
+            return Err(VfsError::NotADir(path.into()));
+        }
+
+        // colectăm toate intrările cu parent == dir_id
+        let mut entries = Vec::new();
+        for ((parent, name), child) in self.children.iter() {
+            if *parent == dir_id {
+                let child_inode = self
+                    .inodes
+                    .get(child)
+                    .ok_or_else(|| VfsError::CorruptLog("child inode missing".into()))?;
+
+                entries.push(DirEntry {
+                    parent: dir_id,
+                    inode: *child,
+                    name: name.clone(),
+                    kind: child_inode.kind,
+                });
+            }
+        }
+
+        // sortăm pentru rezultate deterministe 
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok(ReadDir { entries, pos: 0 })
+    }
+
 }
 
-// ReadDir rămâne placeholder momentan; îl implementăm când facem read_dir.
 impl Iterator for ReadDir {
     type Item = Result<DirEntry>;
+
     fn next(&mut self) -> Option<Self::Item> {
-        None
+        if self.pos >= self.entries.len() {
+            return None;
+        }
+        let e = self.entries[self.pos].clone();
+        self.pos += 1;
+        Some(Ok(e))
     }
 }
