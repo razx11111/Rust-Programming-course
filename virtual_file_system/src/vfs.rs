@@ -137,8 +137,8 @@ impl Inner {
 
         // mergem record cu record până când read_next_record spune None
         // None = EOF sau tail incomplet 
-        while let Some((rec, next_offset)) = read_next_record(&mut self.file, offset)? {
-            self.apply_record(&rec)?;
+        while let Some((decoded, next_offset)) = read_next_record(&mut self.file, offset)? {
+            self.apply_decoded(decoded)?;
             offset = next_offset;
         }
 
@@ -156,6 +156,41 @@ impl Inner {
 
         Ok(())
     }
+
+    fn apply_decoded(&mut self, decoded: crate::no_sql::DecodedRecord) -> Result<()> {
+    match &decoded.record {
+        Record::DataWrite { inode, logical_offset, len, .. } => {
+            let data_off = decoded.data_payload_offset.ok_or_else(|| {
+                VfsError::CorruptLog("DataWrite missing data offset".into())
+            })?;
+
+            // găsim inode-ul și adăugăm extent
+            let node = self.inodes.get_mut(inode).ok_or_else(|| {
+                VfsError::CorruptLog("DataWrite inode missing".into())
+            })?;
+
+            node.extents.push(crate::structs::Extent {
+                logical_offset: *logical_offset,
+                file_offset: data_off,
+                len: *len,
+            });
+
+            // update size (max)
+            let end = logical_offset.saturating_add(*len);
+            if end > node.metadata.size {
+                node.metadata.size = end;
+            }
+            // modified_at (opțional: aici sau prin SetTimes record)
+            node.metadata.modified_at = Timestamp::now();
+
+            Ok(())
+        }
+        _ => {
+            // pentru restul record-urilor, folosești apply_record existent
+            self.apply_record(&decoded.record)
+        }
+    }
+}
 
     fn apply_record(&mut self, rec: &Record) -> Result<()> {
         match rec {

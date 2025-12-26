@@ -84,7 +84,7 @@ pub struct Inode {
 }
 
 /// header persisted at the start of the backing file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Header {
     pub magic: [u8; 8],
     pub version: u32,
@@ -93,7 +93,7 @@ pub struct Header {
 }
 
 /// snapshot of the free list and inode table used to accelerate mounts.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Checkpoint {
     pub next_inode: InodeId,
     pub free_extents: ExtentList,
@@ -101,7 +101,7 @@ pub struct Checkpoint {
 }
 
 /// inode snapshot persisted in checkpoints.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InodeSnapshot {
     pub id: InodeId,
     pub parent: Option<InodeId>,
@@ -112,7 +112,7 @@ pub struct InodeSnapshot {
 }
 
 ///operations persisted in the log
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Record {
     Header(Header),
     Checkpoint(Checkpoint),

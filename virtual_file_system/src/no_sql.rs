@@ -297,7 +297,8 @@ pub fn write_record(file: &mut File, record: &Record) -> Result<u64> {
     Ok(off)
 }
 
-pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(Record, u64)>> {
+
+pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedRecord, u64)>> {
     file.seek(SeekFrom::Start(offset))?;
 
     let mut magic = [0u8; 4];
@@ -310,42 +311,166 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(Record, 
 
     let mut len_buf = [0u8; 8];
     file.read_exact(&mut len_buf)?;
-    let payload_len = u64::from_le_bytes(len_buf);
+    let rec_len = u64::from_le_bytes(len_buf);
 
-    let mut payload = vec![0u8; payload_len as usize];
-    if file.read_exact(&mut payload).is_err() {
+    // poziția imediat după rec_len
+    let record_body_start = offset + 4 + 8;
+
+    // citim tag-ul (1 byte)
+    let mut tag_buf = [0u8; 1];
+    if file.read_exact(&mut tag_buf).is_err() {
         return Ok(None);
     }
+    let tag = tag_buf[0];
 
-    let mut crc_buf = [0u8; 4];
-    if file.read_exact(&mut crc_buf).is_err() {
-        return Ok(None);
-    }
-    let expected = u32::from_le_bytes(crc_buf);
+    match tag {
+        1 | 2 => {
+            // Pentru record-uri “mici”: citim tot body-ul rămas în memorie
+            // Am consumat deja 1 byte (tag), deci mai rămân rec_len - 1 bytes
+            let remaining = (rec_len as usize).checked_sub(1)
+                .ok_or_else(|| VfsError::CorruptLog("record len underflow".into()))?;
 
-    let mut scratch = Vec::with_capacity(12 + payload.len());
-    scratch.extend_from_slice(RECORD_MAGIC);
-    scratch.extend_from_slice(&payload_len.to_le_bytes());
-    scratch.extend_from_slice(&payload);
+            let mut rest = vec![0u8; remaining];
+            if file.read_exact(&mut rest).is_err() {
+                return Ok(None);
+            }
 
-    let got = crc32(&scratch);
-    if got != expected {
-        return Ok(None);
-    }
+            // Reconstruim payload complet (tag + rest)
+            let mut payload = Vec::with_capacity(1 + rest.len());
+            payload.push(tag);
+            payload.extend_from_slice(&rest);
 
-    let mut d = Decoder::new(&payload);
-    let tag = d.get_u8()?;
+            // Citim CRC-ul de la final (4 bytes)
+            let mut crc_buf = [0u8; 4];
+            if file.read_exact(&mut crc_buf).is_err() {
+                return Ok(None);
+            }
+            let expected_crc = u32::from_le_bytes(crc_buf);
 
-    let rec = match tag {
-        1 => Record::InodeAlloc(decode_inode_snapshot(&mut d)?),
-        2 => Record::DirEntryAdd { entry: decode_dir_entry(&mut d)? },
+            // Verificăm CRC: MAGIC + LEN + PAYLOAD
+            let mut scratch = Vec::with_capacity(4 + 8 + payload.len());
+            scratch.extend_from_slice(RECORD_MAGIC);
+            scratch.extend_from_slice(&rec_len.to_le_bytes());
+            scratch.extend_from_slice(&payload);
+
+            let got_crc = crc32(&scratch);
+            if got_crc != expected_crc {
+                return Err(VfsError::CorruptLog("crc mismatch".into()));
+            }
+
+            let mut d = Decoder::new(&payload);
+            let tag2 = d.get_u8()?;
+            let record = match tag2 {
+                1 => crate::structs::Record::InodeAlloc(decode_inode_snapshot(&mut d)?),
+                2 => crate::structs::Record::DirEntryAdd { entry: decode_dir_entry(&mut d)? },
+                _ => return Err(VfsError::CorruptLog("unexpected tag".into())),
+            };
+            if !d.is_eof() {
+                return Err(VfsError::CorruptLog("trailing bytes".into()));
+            }
+
+            let next_offset = record_body_start + rec_len + 4;
+            return Ok(Some((
+                DecodedRecord { record, data_payload_offset: None },
+                next_offset,
+            )));
+        }
+
+        3 => {
+            // DataWrite: body = [tag][inode u64][logical u64][len u64][data_crc u32][header_crc u32][data bytes]
+            // Am citit deja tag. Mai citim restul header-ului mic:
+            // inode(8) + logical(8) + len(8) + data_crc(4) = 28 bytes
+            let mut hdr = [0u8; 28];
+            if file.read_exact(&mut hdr).is_err() {
+                return Ok(None);
+            }
+
+            let inode = crate::structs::InodeId(u64::from_le_bytes(hdr[0..8].try_into().unwrap()));
+            let logical_offset = u64::from_le_bytes(hdr[8..16].try_into().unwrap());
+            let len = u64::from_le_bytes(hdr[16..24].try_into().unwrap());
+            let data_crc = u32::from_le_bytes(hdr[24..28].try_into().unwrap());
+
+            // header_crc (4 bytes)
+            let mut crc_buf = [0u8; 4];
+            if file.read_exact(&mut crc_buf).is_err() {
+                return Ok(None);
+            }
+            let expected_header_crc = u32::from_le_bytes(crc_buf);
+
+            // Reconstituim “payload mic” (tag + inode + logical + len + data_crc) și verificăm CRC
+            let mut scratch = Vec::with_capacity(1 + 28);
+            scratch.push(3);
+            scratch.extend_from_slice(&hdr);
+
+            let got_header_crc = crc32(&scratch);
+            if got_header_crc != expected_header_crc {
+                return Ok(None);
+            }
+
+            // AICI este punctul important:
+            // poziția curentă în fișier este exact începutul datelor
+            let data_payload_offset = file.stream_position().map_err(VfsError::Io)?;
+
+            // verificăm dacă datele există complet (altfel crash-tail => stop replay)
+            let end = file.seek(SeekFrom::End(0))?;
+            let need_end = data_payload_offset.saturating_add(len);
+            if need_end > end {
+                return Ok(None);
+            }
+
+            // sărim peste data bytes (fără să le citim)
+            file.seek(SeekFrom::Start(need_end))?;
+
+            let record = crate::structs::Record::DataWrite {
+                inode,
+                logical_offset,
+                len,
+                checksum: data_crc,
+            };
+
+            let next_offset = record_body_start + rec_len;
+            return Ok(Some((
+                DecodedRecord { record, data_payload_offset: Some(data_payload_offset) },
+                next_offset,
+            )));
+        }
+
         _ => return Err(VfsError::CorruptLog("unknown record tag".into())),
-    };
-
-    if !d.is_eof() {
-        return Err(VfsError::CorruptLog("record trailing bytes".into()));
     }
+}
 
-    let next_offset = offset + 4 + 8 + payload_len + 4;
-    Ok(Some((rec, next_offset)))
+pub struct DecodedRecord {
+    pub record: crate::structs::Record,
+    pub data_payload_offset: Option<u64>,
+}
+
+pub fn write_data_write_record<W: Write + Seek>(w: &mut W, inode: InodeId, logical_offset: u64, data: &[u8], scratch: &mut Vec<u8>) -> Result<(u32, u64)> {
+    const TAG_DATA_WRITE: u8 = 3;
+
+    // payload mic (fără data bytes)
+    scratch.clear();
+    scratch.push(TAG_DATA_WRITE);
+    scratch.extend_from_slice(&inode.0.to_le_bytes());
+    scratch.extend_from_slice(&logical_offset.to_le_bytes());
+    scratch.extend_from_slice(&(data.len() as u64).to_le_bytes());
+
+    let data_crc = crc32(data);
+    scratch.extend_from_slice(&data_crc.to_le_bytes());
+
+    // CRC peste payload mic
+    let header_crc = crc32(scratch);
+
+    // rec_len = payload_mic + header_crc(4) + data_bytes
+    let rec_len = scratch.len() as u64 + 4 + data.len() as u64;
+
+    let data_payload_offset = w.stream_position()?;
+
+    // scriem framing + payload + header_crc + data
+    w.write_all(RECORD_MAGIC).map_err(VfsError::Io)?;
+    w.write_all(&rec_len.to_le_bytes()).map_err(VfsError::Io)?;
+    w.write_all(scratch).map_err(VfsError::Io)?;
+    w.write_all(&header_crc.to_le_bytes()).map_err(VfsError::Io)?;
+    w.write_all(data).map_err(VfsError::Io)?;
+
+    Ok((data_crc, data_payload_offset))
 }

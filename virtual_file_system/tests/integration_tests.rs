@@ -33,14 +33,14 @@ fn record_roundtrip_inode_alloc() {
         Err(e) => panic!("failed to write record: {:?}", e),
     };
 
-    let off:u32 = 8 + 4 + 4 + 8;
+    let off:u32 = 24;
     let got = match read_next_record(&mut f, off as u64) {
         Ok(Some((rec, _))) => rec,
         Ok(None) => panic!("no record found"),
         Err(e) => panic!("failed to read record: {:?}", e),
     };
 
-    match got {
+    match &got.record {
         Record::InodeAlloc(s) => assert_eq!(s.id.0, 1),
         _ => panic!("wrong record"),
     }
@@ -102,8 +102,13 @@ fn read_dir_lists_children() {
         Ok(_) => {},
     };
 
+    let dir_vec = match v.read_dir("rs") {
+        Err(e) => panic!("read_dir failed: {:?}", e),
+        Ok(entries) => entries,
+    };
     let mut names = vec![];
-    for e in v.read_dir("rs").unwrap() {
+    
+    for e in dir_vec {
         let e = e.unwrap();
         names.push(e.name);
     }
