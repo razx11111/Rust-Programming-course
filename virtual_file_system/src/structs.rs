@@ -120,11 +120,6 @@ pub enum Record {
     DirEntryAdd {
         entry: DirEntry,
     },
-    DirEntryRemove {
-        parent: InodeId,
-        name: String,
-        inode: InodeId,
-    },
     DataWrite {
         inode: InodeId,
         logical_offset: u64,

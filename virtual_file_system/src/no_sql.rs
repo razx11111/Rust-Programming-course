@@ -1,16 +1,22 @@
+use crate::VfsError;
 use crate::structs::*;
 use crc32fast::Hasher;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use crate::VfsError;
 
 const RECORD_MAGIC: &[u8; 4] = b"VFSR";
-const HEADER_MAGIC: &[u8; 8] = &[67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8]; 
+const HEADER_MAGIC: &[u8; 8] = &[67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8];
 const VERSION: u32 = 1;
 const HEADER_LEN: u64 = 24; //aproape cum aveam pt superblock 8 magic 4 version 4 bsize 8 root
 
 pub struct Encoder {
     buf: Vec<u8>,
+}
+
+impl Default for Encoder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Encoder {
@@ -178,7 +184,10 @@ fn encode_inode_snapshot(e: &mut Encoder, snap: &InodeSnapshot) {
 
     // parent: Option<InodeId>
     match snap.parent {
-        Some(p) => { e.put_u8(1); e.put_u64(p.0); }
+        Some(p) => {
+            e.put_u8(1);
+            e.put_u64(p.0);
+        }
         None => e.put_u8(0),
     }
 
@@ -234,7 +243,11 @@ fn decode_inode_snapshot(d: &mut Decoder<'_>) -> Result<InodeSnapshot> {
         parent,
         name,
         kind,
-        metadata: Metadata { size, created_at, modified_at },
+        metadata: Metadata {
+            size,
+            created_at,
+            modified_at,
+        },
         extents,
     })
 }
@@ -258,7 +271,12 @@ fn decode_dir_entry(d: &mut Decoder<'_>) -> Result<DirEntry> {
         2 => NodeKind::Dir,
         _ => return Err(VfsError::CorruptLog("invalid dir entry kind".into())),
     };
-    Ok(DirEntry { parent, inode, name, kind })
+    Ok(DirEntry {
+        parent,
+        inode,
+        name,
+        kind,
+    })
 }
 
 pub fn write_record(file: &mut File, record: &Record) -> Result<u64> {
@@ -273,11 +291,23 @@ pub fn write_record(file: &mut File, record: &Record) -> Result<u64> {
             e.put_u8(2);
             encode_dir_entry(&mut e, entry);
         }
+        Record::Truncate { inode, len } => {
+            e.put_u8(4);
+            encode_truncate(&mut e, *inode, *len);
+        }
+        Record::SetTimes {
+            inode,
+            created_at,
+            modified_at,
+        } => {
+            e.put_u8(5);
+            encode_set_times(&mut e, *inode, created_at, modified_at);
+        }
         _ => {
             return Err(VfsError::CorruptLog(
-                "write_record: record not implemented yet".into(),
+                "write_record: record not implemented".into(),
             ));
-        } 
+        }
     }
 
     let payload = e.into_inner();
@@ -297,7 +327,6 @@ pub fn write_record(file: &mut File, record: &Record) -> Result<u64> {
 
     Ok(off)
 }
-
 
 pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedRecord, u64)>> {
     file.seek(SeekFrom::Start(offset))?;
@@ -325,10 +354,11 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
     let tag = tag_buf[0];
 
     match tag {
-        1 | 2 => {
+        1 | 2 | 4 | 5 => {
             // Pentru record-uri “mici”: citim tot body-ul rămas în memorie
             // Am consumat deja 1 byte (tag), deci mai rămân rec_len - 1 bytes
-            let remaining = (rec_len as usize).checked_sub(1)
+            let remaining = (rec_len as usize)
+                .checked_sub(1)
                 .ok_or_else(|| VfsError::CorruptLog("record len underflow".into()))?;
 
             let mut rest = vec![0u8; remaining];
@@ -362,8 +392,22 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
             let mut d = Decoder::new(&payload);
             let tag2 = d.get_u8()?;
             let record = match tag2 {
-                1 => crate::structs::Record::InodeAlloc(decode_inode_snapshot(&mut d)?),
-                2 => crate::structs::Record::DirEntryAdd { entry: decode_dir_entry(&mut d)? },
+                1 => Record::InodeAlloc(decode_inode_snapshot(&mut d)?),
+                2 => Record::DirEntryAdd {
+                    entry: decode_dir_entry(&mut d)?,
+                },
+                4 => {
+                    let (inode, len) = decode_truncate(&mut d)?;
+                    Record::Truncate { inode, len }
+                }
+                5 => {
+                    let (inode, created_at, modified_at) = decode_set_times(&mut d)?;
+                    Record::SetTimes {
+                        inode,
+                        created_at,
+                        modified_at,
+                    }
+                }
                 _ => return Err(VfsError::CorruptLog("unexpected tag".into())),
             };
             if !d.is_eof() {
@@ -371,10 +415,13 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
             }
 
             let next_offset = record_body_start + rec_len + 4;
-            return Ok(Some((
-                DecodedRecord { record, data_payload_offset: None },
+            Ok(Some((
+                DecodedRecord {
+                    record,
+                    data_payload_offset: None,
+                },
                 next_offset,
-            )));
+            )))
         }
 
         3 => {
@@ -386,10 +433,22 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
                 return Ok(None);
             }
 
-            let inode = crate::structs::InodeId(u64::from_le_bytes(hdr[0..8].try_into().unwrap()));
-            let logical_offset = u64::from_le_bytes(hdr[8..16].try_into().unwrap());
-            let len = u64::from_le_bytes(hdr[16..24].try_into().unwrap());
-            let data_crc = u32::from_le_bytes(hdr[24..28].try_into().unwrap());
+            let inode = InodeId(u64::from_le_bytes(match hdr[0..8].try_into() {
+                Ok(b) => b,
+                Err(_) => return Err(VfsError::CorruptLog("invalid inode bytes".into())),
+            }));
+            let logical_offset = u64::from_le_bytes(match hdr[8..16].try_into() {
+                Ok(b) => b,
+                Err(_) => return Err(VfsError::CorruptLog("invalid logical offset bytes".into())),
+            });
+            let len = u64::from_le_bytes(match hdr[16..24].try_into() {
+                Ok(b) => b,
+                Err(_) => return Err(VfsError::CorruptLog("invalid len bytes".into())),
+            });
+            let data_crc = u32::from_le_bytes(match hdr[24..28].try_into() {
+                Ok(b) => b,
+                Err(_) => return Err(VfsError::CorruptLog("invalid data crc bytes".into())),
+            });
 
             // header_crc (4 bytes)
             let mut crc_buf = [0u8; 4];
@@ -422,7 +481,7 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
             // sărim peste data bytes (fără să le citim)
             file.seek(SeekFrom::Start(need_end))?;
 
-            let record = crate::structs::Record::DataWrite {
+            let record = Record::DataWrite {
                 inode,
                 logical_offset,
                 len,
@@ -430,13 +489,15 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
             };
 
             let next_offset = record_body_start + rec_len;
-            return Ok(Some((
-                DecodedRecord { record, data_payload_offset: Some(data_payload_offset) },
+            Ok(Some((
+                DecodedRecord {
+                    record,
+                    data_payload_offset: Some(data_payload_offset),
+                },
                 next_offset,
-            )));
+            )))
         }
-
-        _ => return Err(VfsError::CorruptLog("unknown record tag".into())),
+        _ => Err(VfsError::CorruptLog("unknown record tag".into())),
     }
 }
 
@@ -445,7 +506,13 @@ pub struct DecodedRecord {
     pub data_payload_offset: Option<u64>,
 }
 
-pub fn write_data_write_record<W: Write + Seek>(w: &mut W, inode: InodeId, logical_offset: u64, data: &[u8], scratch: &mut Vec<u8>) -> Result<(u32, u64)> {
+pub fn write_data_write_record<W: Write + Seek>(
+    w: &mut W,
+    inode: InodeId,
+    logical_offset: u64,
+    data: &[u8],
+    scratch: &mut Vec<u8>,
+) -> Result<(u32, u64)> {
     const TAG_DATA_WRITE: u8 = 3;
 
     // payload mic (fără data bytes)
@@ -470,8 +537,58 @@ pub fn write_data_write_record<W: Write + Seek>(w: &mut W, inode: InodeId, logic
     w.write_all(RECORD_MAGIC).map_err(VfsError::Io)?;
     w.write_all(&rec_len.to_le_bytes()).map_err(VfsError::Io)?;
     w.write_all(scratch).map_err(VfsError::Io)?;
-    w.write_all(&header_crc.to_le_bytes()).map_err(VfsError::Io)?;
+    w.write_all(&header_crc.to_le_bytes())
+        .map_err(VfsError::Io)?;
     w.write_all(data).map_err(VfsError::Io)?;
 
     Ok((data_crc, data_payload_offset))
+}
+
+fn encode_truncate(e: &mut Encoder, inode: crate::structs::InodeId, len: u64) {
+    e.put_u64(inode.0);
+    e.put_u64(len);
+}
+
+fn decode_truncate(d: &mut Decoder<'_>) -> Result<(crate::structs::InodeId, u64)> {
+    let inode = crate::structs::InodeId(d.get_u64()?);
+    let len = d.get_u64()?;
+    Ok((inode, len))
+}
+
+fn encode_opt_timestamp(e: &mut Encoder, t: &Option<Timestamp>) {
+    match t {
+        None => e.put_u8(0),
+        Some(v) => {
+            e.put_u8(1);
+            e.put_i128(v.0);
+        }
+    }
+}
+
+fn decode_opt_timestamp(d: &mut Decoder<'_>) -> Result<Option<Timestamp>> {
+    match d.get_u8()? {
+        0 => Ok(None),
+        1 => Ok(Some(Timestamp(d.get_i128()?))),
+        _ => Err(VfsError::CorruptLog("invalid opt timestamp tag".into())),
+    }
+}
+
+fn encode_set_times(
+    e: &mut Encoder,
+    inode: InodeId,
+    created: &Option<Timestamp>,
+    modified: &Option<Timestamp>,
+) {
+    e.put_u64(inode.0);
+    encode_opt_timestamp(e, created);
+    encode_opt_timestamp(e, modified);
+}
+
+fn decode_set_times(
+    d: &mut Decoder<'_>,
+) -> Result<(InodeId, Option<Timestamp>, Option<Timestamp>)> {
+    let inode = InodeId(d.get_u64()?);
+    let created = decode_opt_timestamp(d)?;
+    let modified = decode_opt_timestamp(d)?;
+    Ok((inode, created, modified))
 }

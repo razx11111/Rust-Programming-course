@@ -1,6 +1,6 @@
+use crate::VfsError;
 use crate::structs::InodeId;
 use crate::vfs::Vfs;
-use crate::VfsError;
 use std::cell::RefCell;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
@@ -14,12 +14,23 @@ pub struct VfsFile {
 }
 
 impl VfsFile {
-    pub(crate) fn new(inner: Rc<RefCell<crate::vfs::Inner>>, inode: InodeId, writable: bool) -> Self {
-        Self { inner, inode, cursor: 0, writable }
+    pub(crate) fn new(
+        inner: Rc<RefCell<crate::vfs::Inner>>,
+        inode: InodeId,
+        writable: bool,
+    ) -> Self {
+        Self {
+            inner,
+            inode,
+            cursor: 0,
+            writable,
+        }
     }
 
     fn vfs(&self) -> Vfs {
-        Vfs { inner: self.inner.clone() }
+        Vfs {
+            inner: self.inner.clone(),
+        }
     }
 
     pub fn len(&self) -> Result<u64, VfsError> {
@@ -49,7 +60,10 @@ impl Read for VfsFile {
 impl Write for VfsFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if !self.writable {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "file not opened for writing"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "file not opened for writing",
+            ));
         }
         let vfs = self.vfs();
         let n = vfs
