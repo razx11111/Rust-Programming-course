@@ -1,7 +1,8 @@
 use crate::structs::*;
 use crc32fast::Hasher;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
+use crate::VfsError;
 
 const RECORD_MAGIC: &[u8; 4] = b"VFSR";
 const HEADER_MAGIC: &[u8; 8] = &[67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8, 67u8]; 
@@ -379,7 +380,7 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
         3 => {
             // DataWrite: body = [tag][inode u64][logical u64][len u64][data_crc u32][header_crc u32][data bytes]
             // Am citit deja tag. Mai citim restul header-ului mic:
-            // inode(8) + logical(8) + len(8) + data_crc(4) = 28 bytes
+
             let mut hdr = [0u8; 28];
             if file.read_exact(&mut hdr).is_err() {
                 return Ok(None);

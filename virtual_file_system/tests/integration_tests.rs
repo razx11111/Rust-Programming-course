@@ -1,7 +1,8 @@
 use std::fs::{OpenOptions};
-use virtual_file_system::no_sql::{read_next_record, write_header, write_record};
+use virtual_file_system::no_sql::*;
 use virtual_file_system::structs::*;
 use virtual_file_system::Vfs;
+use std::io::{Read, Write};
 
 #[test]
 fn record_roundtrip_inode_alloc() {
@@ -114,4 +115,35 @@ fn read_dir_lists_children() {
     }
     names.sort();
     assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+}
+
+#[test]
+fn example_like_assignment() {
+    let path = "target/e2e.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut vfs = Vfs::open(path).unwrap();
+    vfs.create_dir("rs").unwrap();
+
+    {
+        let mut f1 = vfs.create("rs/abc.txt").unwrap();
+        let mut f2 = vfs.create("rs/def.txt").unwrap();
+        f1.write_all(b"hello").unwrap();
+        f2.write_all(b"world").unwrap();
+    }
+                                                                    
+    let vfs2 = Vfs::open(path).unwrap();
+
+    let mut out = String::new();
+    let mut total = String::new();
+
+    for entry in vfs2.read_dir("rs").unwrap() {
+        let entry = entry.unwrap();
+        out.clear();
+        let mut file = vfs2.open_file(&format!("rs/{}", entry.name)).unwrap();
+        file.read_to_string(&mut out).unwrap();
+        total.push_str(&out);
+    }
+
+    assert_eq!(total, "helloworld");
 }
