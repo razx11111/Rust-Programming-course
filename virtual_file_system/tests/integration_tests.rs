@@ -182,16 +182,154 @@ fn truncate_persists() {
 }
 
 #[test]
-fn set_times_stable_across_reopen() {
-    let path = "target/times.vfs";
+fn modified_time_persists_and_is_not_mount_time() {
+    let path = "target/meta_times.vfs";
     let _ = std::fs::remove_file(path);
 
     let mut v = Vfs::mount(path).unwrap();
     v.create_dir("rs").unwrap();
 
-    // dormim ca să fie clar diferit dacă ar folosi now() la replay
+    let t0 = v.metadata("rs").unwrap().modified_at;
+
     sleep(Duration::from_millis(5));
 
-    let _v2 = Vfs::mount(path).unwrap();
-    
+    // write într-un fișier nou
+    let mut f = v.create("rs/a.txt").unwrap();
+    f.write_all(b"hello").unwrap();
+    drop(f);
+
+    let t1 = v.metadata("rs/a.txt").unwrap().modified_at;
+    assert!(t1 >= t0);
+
+    // reopen: timpii trebuie să rămână aceiași
+    sleep(Duration::from_millis(5));
+    let v2 = Vfs::mount(path).unwrap();
+
+    let t1b = v2.metadata("rs/a.txt").unwrap().modified_at;
+    assert_eq!(t1b, t1);
+}
+
+#[test]
+fn size_persists_after_truncate() {
+    let path = "target/meta_size.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut v = Vfs::mount(path).unwrap();
+    v.create_dir("rs").unwrap();
+
+    let mut f = v.create("rs/a.txt").unwrap();
+    f.write_all(b"hello world").unwrap();
+    f.set_len(5).unwrap();
+    drop(f);
+
+    let m1 = v.metadata("rs/a.txt").unwrap();
+    assert_eq!(m1.size, 5);
+
+    let v2 = Vfs::mount(path).unwrap();
+    let m2 = v2.metadata("rs/a.txt").unwrap();
+    assert_eq!(m2.size, 5);
+}
+
+#[test]
+fn remove_file_persists() {
+    let path = "target/remove_file.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut v = Vfs::mount(path).unwrap();
+    v.create_dir("rs").unwrap();
+
+    let mut f = v.create("rs/a.txt").unwrap();
+    f.write_all(b"hello").unwrap();
+    drop(f);
+
+    assert!(v.exists("rs/a.txt"));
+
+    v.remove_file("rs/a.txt").unwrap();
+    assert!(!v.exists("rs/a.txt"));
+
+    // reopen: încă nu există
+    let v2 = Vfs::mount(path).unwrap();
+    assert!(!v2.exists("rs/a.txt"));
+}
+
+#[test]
+fn remove_dir_only_if_empty() {
+    let path = "target/remove_dir.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut v = Vfs::mount(path).unwrap();
+    v.create_dir("rs").unwrap();
+    v.create_dir("rs/sub").unwrap();
+
+    // rs nu e gol => error
+    assert!(v.remove_dir("rs").is_err());
+
+    // sub e gol => ok
+    v.remove_dir("rs/sub").unwrap();
+    assert!(!v.exists("rs/sub"));
+
+    // reopen persist
+    let v2 = Vfs::mount(path).unwrap();
+    assert!(!v2.exists("rs/sub"));
+}
+#[test]
+fn rename_in_same_dir() {
+    let path = "target/rename1.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut v = Vfs::mount(path).unwrap();
+    v.create_dir("rs").unwrap();
+
+    let mut f = v.create("rs/a.txt").unwrap();
+    f.write_all(b"hello").unwrap();
+    drop(f);
+
+    v.rename("rs/a.txt", "rs/b.txt").unwrap();
+
+    assert!(!v.exists("rs/a.txt"));
+    assert!(v.exists("rs/b.txt"));
+
+    let mut s = String::new();
+    v.open("rs/b.txt").unwrap().read_to_string(&mut s).unwrap();
+    assert_eq!(s, "hello");
+}
+
+#[test]
+fn rename_across_dirs() {
+    let path = "target/rename2.vfs";
+    let _ = std::fs::remove_file(path);
+
+    let mut v = Vfs::mount(path).unwrap();
+    v.create_dir("a").unwrap();
+    v.create_dir("b").unwrap();
+
+    let mut f = v.create("a/x.txt").unwrap();
+    f.write_all(b"data").unwrap();
+    drop(f);
+
+    v.rename("a/x.txt", "b/y.txt").unwrap();
+
+    assert!(!v.exists("a/x.txt"));
+    assert!(v.exists("b/y.txt"));
+
+    let mut s = String::new();
+    v.open("b/y.txt").unwrap().read_to_string(&mut s).unwrap();
+    assert_eq!(s, "data");
+}
+
+#[test]
+fn rename_persists_after_reopen() {
+    let path = "target/rename3.vfs";
+    let _ = std::fs::remove_file(path);
+
+    {
+        let mut v = Vfs::mount(path).unwrap();
+        v.create_dir("rs").unwrap();
+        let _ = v.create("rs/a.txt").unwrap();
+        v.rename("rs/a.txt", "rs/b.txt").unwrap();
+    }
+
+    let v2 = Vfs::mount(path).unwrap();
+    assert!(!v2.exists("rs/a.txt"));
+    assert!(v2.exists("rs/b.txt"));
 }

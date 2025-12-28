@@ -171,6 +171,29 @@ impl Vfs {
     pub fn open(&self, path: &str) -> Result<VfsFile> {
         self.open_file(path)
     }
+
+    pub fn exists(&self, path: &str) -> bool {
+        let inner = self.inner.borrow();
+        inner.path_to_inode(path).is_ok()
+    }
+    
+    pub fn metadata(&self, path: &str) -> Result<Metadata> {
+        let inner = self.inner.borrow();
+        inner.metadata(path)
+    }
+
+    pub fn remove_file(&mut self, path: &str) -> Result<()> {
+        self.inner.borrow_mut().unlink(path, NodeKind::File)
+    }
+
+    pub fn remove_dir(&mut self, path: &str) -> Result<()> {
+        self.inner.borrow_mut().unlink(path, NodeKind::Dir)
+    }
+
+    pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<()> {
+        self.inner.borrow_mut().rename(old_path, new_path)
+    }
+
 }
 
 impl Inner {
@@ -256,6 +279,12 @@ impl Inner {
                 modified_at,
             } => {
                 self.apply_set_times(*inode, created_at, modified_at)?;
+            }
+            Record::DirEntryRemove { parent, name, inode } => {
+                self.apply_dir_entry_remove(*parent, name, *inode)?;
+            }
+            Record::Rename { inode, old_parent, new_parent, old_name, new_name } => {
+                self.apply_rename(*inode, *old_parent, *new_parent, old_name, new_name)?;
             }
             _ => {}
         }
@@ -672,7 +701,6 @@ impl Inner {
             return Err(VfsError::NotAFile(node.name.clone()));
         }
 
-        // persist
         write_record(&mut self.file, &Record::Truncate { inode, len })?;
 
         // apply in-memory (aceeași logică ca replay)
@@ -720,6 +748,204 @@ impl Inner {
         if let Some(m) = modified_at {
             node.metadata.modified_at = *m;
         }
+        Ok(())
+    }
+
+    fn metadata(&self, path: &str) -> Result<Metadata> {
+        let inode_id = if path.is_empty() {
+            self.header.root
+        } else {
+            self.path_to_inode(path)?
+        };
+
+        let inode = self
+            .inodes
+            .get(&inode_id)
+            .ok_or_else(|| VfsError::NotFound(path.into()))?;
+
+        Ok(inode.metadata.clone())
+    }
+
+    fn apply_dir_entry_remove(&mut self, parent: InodeId, name: &str, inode: InodeId) -> Result<()> {
+        // parent trebuie să existe și să fie dir
+        let p = self.inodes.get(&parent)
+            .ok_or_else(|| VfsError::CorruptLog("direntry remove parent missing".into()))?;
+        if p.kind != NodeKind::Dir {
+            return Err(VfsError::CorruptLog("direntry remove parent not dir".into()));
+        }
+
+        let key = (parent, name.to_string());
+
+        // trebuie să existe entry-ul
+        let existing = self.children.get(&key)
+            .copied()
+            .ok_or_else(|| VfsError::CorruptLog("direntry remove missing entry".into()))?;
+
+        // trebuie să corespundă inode-ului din log
+        if existing != inode {
+            return Err(VfsError::CorruptLog("direntry remove inode mismatch".into()));
+        }
+
+        self.children.remove(&key);
+        Ok(())
+    }
+
+    fn find_parent_and_leaf(&self, path: &str) -> Result<(InodeId, String)> {
+        let parts = Vfs::split_path(path)?;
+        let (parent_parts, leaf) = parts.split_at(parts.len() - 1);
+        let name = leaf[0].to_string();
+
+        let parent = if parent_parts.is_empty() {
+            self.header.root
+        } else {
+            let mut cur = self.header.root;
+            for p in parent_parts {
+                let key = (cur, (*p).to_string());
+                cur = *self.children.get(&key).ok_or_else(|| VfsError::NotFound(path.into()))?;
+            }
+            cur
+        };
+
+        Ok((parent, name))
+    }
+
+    fn unlink(&mut self, path: &str, expect_kind: NodeKind) -> Result<()> {
+        let (parent, name) = self.find_parent_and_leaf(path)?;
+        let key = (parent, name.clone());
+
+        let inode = self.children.get(&key)
+            .copied()
+            .ok_or_else(|| VfsError::NotFound(path.into()))?;
+
+        let node = self.inodes.get(&inode)
+            .ok_or_else(|| VfsError::CorruptLog("unlink inode missing".into()))?;
+
+        if node.kind != expect_kind {
+            return match expect_kind {
+                NodeKind::File => Err(VfsError::NotAFile(path.into())),
+                NodeKind::Dir => Err(VfsError::NotADir(path.into())),
+            };
+        }
+
+        // dacă e dir, trebuie să fie gol (fără copii)
+        if expect_kind == NodeKind::Dir {
+            let has_child = self.children.keys().any(|(p, _)| *p == inode);
+            if has_child {
+                return Err(VfsError::InvalidPath("directory not empty".into()));
+            }
+        }
+
+        // persist
+        let rec = Record::DirEntryRemove { parent, name: name.clone(), inode };
+        self.file.seek(SeekFrom::End(0))?;
+        write_record(&mut self.file, &rec)?;
+        self.file.sync_all()?;
+
+        // apply
+        self.apply_record(&rec)?;
+        Ok(())
+    }
+
+    fn apply_rename(
+        &mut self,
+        inode: InodeId,
+        old_parent: InodeId,
+        new_parent: InodeId,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        // Validate parents and old entry before getting mutable borrow
+        // old_parent / new_parent trebuie să existe și să fie dir
+        let op = self.inodes.get(&old_parent)
+            .ok_or_else(|| VfsError::CorruptLog("rename old_parent missing".into()))?;
+        if op.kind != NodeKind::Dir {
+            return Err(VfsError::CorruptLog("rename old_parent not dir".into()));
+        }
+
+        let np = self.inodes.get(&new_parent)
+            .ok_or_else(|| VfsError::CorruptLog("rename new_parent missing".into()))?;
+        if np.kind != NodeKind::Dir {
+            return Err(VfsError::CorruptLog("rename new_parent not dir".into()));
+        }
+
+        // trebuie să existe vecheaentry și să pointeze la inode
+        let old_key = (old_parent, old_name.to_string());
+        let existing = self.children.get(&old_key)
+            .copied()
+            .ok_or_else(|| VfsError::CorruptLog("rename old entry missing".into()))?;
+        if existing != inode {
+            return Err(VfsError::CorruptLog("rename old entry inode mismatch".into()));
+        }
+
+        // noua destinație trebuie să fie liberă (MVP: fără overwrite)
+        let new_key = (new_parent, new_name.to_string());
+        if self.children.contains_key(&new_key) {
+            return Err(VfsError::CorruptLog("rename destination exists".into()));
+        }
+
+        // inode trebuie să existe
+        let node = self.inodes.get_mut(&inode)
+            .ok_or_else(|| VfsError::CorruptLog("rename inode missing".into()))?;
+
+        // mutarea efectivă
+        self.children.remove(&old_key);
+        self.children.insert(new_key, inode);
+
+        // update inode in-memory
+        node.parent = Some(new_parent);
+        node.name = new_name.to_string();
+
+        Ok(())
+    }
+    
+    fn rename(&mut self, old_path: &str, new_path: &str) -> Result<()> {
+        // old: (old_parent, old_name, inode)
+        let (old_parent, old_name) = self.find_parent_and_leaf(old_path)?;
+        let old_key = (old_parent, old_name.clone());
+
+        let inode = self.children.get(&old_key)
+            .copied()
+            .ok_or_else(|| VfsError::NotFound(old_path.into()))?;
+
+        // new: (new_parent, new_name)
+        let (new_parent, new_name) = self.find_parent_and_leaf(new_path)?;
+        let new_key = (new_parent, new_name.clone());
+
+        // new parent trebuie să existe și să fie dir
+        let np = self.inodes.get(&new_parent)
+            .ok_or_else(|| VfsError::NotFound(new_path.into()))?;
+        if np.kind != NodeKind::Dir {
+            return Err(VfsError::NotADir(new_path.into()));
+        }
+
+        // destinația trebuie să fie liberă (MVP)
+        if self.children.contains_key(&new_key) {
+            return Err(VfsError::AlreadyExists(new_path.into()));
+        }
+
+        // persist record
+        let rec = Record::Rename {
+            inode,
+            old_parent,
+            new_parent,
+            old_name: old_name.clone(),
+            new_name: new_name.clone(),
+        };
+        write_record(&mut self.file, &rec)?;
+
+        // apply in-memory
+        self.apply_record(&rec)?;
+
+        // persist SetTimes (modified_at)
+        let now = Timestamp::now();
+        let times = Record::SetTimes {
+            inode,
+            created_at: None,
+            modified_at: Some(now),
+        };
+        write_record(&mut self.file, &times)?;
+        self.apply_record(&times)?;
+
         Ok(())
     }
 }

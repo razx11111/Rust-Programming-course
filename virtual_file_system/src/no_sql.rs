@@ -303,6 +303,14 @@ pub fn write_record(file: &mut File, record: &Record) -> Result<u64> {
             e.put_u8(5);
             encode_set_times(&mut e, *inode, created_at, modified_at);
         }
+        Record::DirEntryRemove { parent, name, inode } => {
+            e.put_u8(6);
+            encode_dir_entry_remove(&mut e, *parent, name, *inode);
+        }
+        Record::Rename { inode, old_parent, new_parent, old_name, new_name } => {
+            e.put_u8(7);
+            encode_rename(&mut e, *inode, *old_parent, *new_parent, old_name, new_name);
+        }
         _ => {
             return Err(VfsError::CorruptLog(
                 "write_record: record not implemented".into(),
@@ -354,7 +362,7 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
     let tag = tag_buf[0];
 
     match tag {
-        1 | 2 | 4 | 5 => {
+        1 | 2 | 4 | 5 | 6 | 7 => {
             // Pentru record-uri “mici”: citim tot body-ul rămas în memorie
             // Am consumat deja 1 byte (tag), deci mai rămân rec_len - 1 bytes
             let remaining = (rec_len as usize)
@@ -407,6 +415,14 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
                         created_at,
                         modified_at,
                     }
+                }
+                6 => {
+                    let (parent, name, inode) = decode_dir_entry_remove(&mut d)?;
+                    Record::DirEntryRemove { parent, name, inode }
+                }
+                7 => {
+                    let (inode, old_parent, new_parent, old_name, new_name) = decode_rename(&mut d)?;
+                    Record::Rename { inode, old_parent, new_parent, old_name, new_name }
                 }
                 _ => return Err(VfsError::CorruptLog("unexpected tag".into())),
             };
@@ -531,14 +547,16 @@ pub fn write_data_write_record<W: Write + Seek>(
     // rec_len = payload_mic + header_crc(4) + data_bytes
     let rec_len = scratch.len() as u64 + 4 + data.len() as u64;
 
-    let data_payload_offset = w.stream_position()?;
-
-    // scriem framing + payload + header_crc + data
+    // scriem framing + payload + header_crc
     w.write_all(RECORD_MAGIC).map_err(VfsError::Io)?;
     w.write_all(&rec_len.to_le_bytes()).map_err(VfsError::Io)?;
     w.write_all(scratch).map_err(VfsError::Io)?;
     w.write_all(&header_crc.to_le_bytes())
         .map_err(VfsError::Io)?;
+
+    // NOW get the offset before writing data
+    let data_payload_offset = w.stream_position()?;
+
     w.write_all(data).map_err(VfsError::Io)?;
 
     Ok((data_crc, data_payload_offset))
@@ -591,4 +609,41 @@ fn decode_set_times(
     let created = decode_opt_timestamp(d)?;
     let modified = decode_opt_timestamp(d)?;
     Ok((inode, created, modified))
+}
+
+fn encode_dir_entry_remove(e: &mut Encoder, parent: crate::structs::InodeId, name: &str, inode: crate::structs::InodeId) {
+    e.put_u64(parent.0);
+    e.put_string(name);
+    e.put_u64(inode.0);
+}
+
+fn decode_dir_entry_remove(d: &mut Decoder<'_>) -> Result<(crate::structs::InodeId, String, crate::structs::InodeId)> {
+    let parent = crate::structs::InodeId(d.get_u64()?);
+    let name = d.get_string()?;
+    let inode = crate::structs::InodeId(d.get_u64()?);
+    Ok((parent, name, inode))
+}
+
+fn encode_rename(
+    e: &mut Encoder,
+    inode: InodeId,
+    old_parent: InodeId,
+    new_parent: crate::structs::InodeId,
+    old_name: &str,
+    new_name: &str,
+) {
+    e.put_u64(inode.0);
+    e.put_u64(old_parent.0);
+    e.put_u64(new_parent.0);
+    e.put_string(old_name);
+    e.put_string(new_name);
+}
+
+fn decode_rename(d: &mut Decoder<'_>,) -> Result<(InodeId, InodeId, InodeId, String,String)> {
+    let inode = InodeId(d.get_u64()?);
+    let old_parent = InodeId(d.get_u64()?);
+    let new_parent = InodeId(d.get_u64()?);
+    let old_name = d.get_string()?;
+    let new_name = d.get_string()?;
+    Ok((inode, old_parent, new_parent, old_name, new_name))
 }
