@@ -303,13 +303,27 @@ pub fn write_record(file: &mut File, record: &Record) -> Result<u64> {
             e.put_u8(5);
             encode_set_times(&mut e, *inode, created_at, modified_at);
         }
-        Record::DirEntryRemove { parent, name, inode } => {
+        Record::DirEntryRemove {
+            parent,
+            name,
+            inode,
+        } => {
             e.put_u8(6);
             encode_dir_entry_remove(&mut e, *parent, name, *inode);
         }
-        Record::Rename { inode, old_parent, new_parent, old_name, new_name } => {
+        Record::Rename {
+            inode,
+            old_parent,
+            new_parent,
+            old_name,
+            new_name,
+        } => {
             e.put_u8(7);
             encode_rename(&mut e, *inode, *old_parent, *new_parent, old_name, new_name);
+        }
+        Record::Checkpoint(cp) => {
+            e.put_u8(8);
+            encode_checkpoint(&mut e, cp);
         }
         _ => {
             return Err(VfsError::CorruptLog(
@@ -362,9 +376,9 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
     let tag = tag_buf[0];
 
     match tag {
-        1 | 2 | 4 | 5 | 6 | 7 => {
+        1 | 2 | 4 | 5 | 6 | 7 | 8 => {
             // Pentru record-uri “mici”: citim tot body-ul rămas în memorie
-            // Am consumat deja 1 byte (tag), deci mai rămân rec_len - 1 bytes
+            // Am consumat deja 1 byte pt tag deci mai rămân rec_len - 1 bytes
             let remaining = (rec_len as usize)
                 .checked_sub(1)
                 .ok_or_else(|| VfsError::CorruptLog("record len underflow".into()))?;
@@ -418,11 +432,26 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
                 }
                 6 => {
                     let (parent, name, inode) = decode_dir_entry_remove(&mut d)?;
-                    Record::DirEntryRemove { parent, name, inode }
+                    Record::DirEntryRemove {
+                        parent,
+                        name,
+                        inode,
+                    }
                 }
                 7 => {
-                    let (inode, old_parent, new_parent, old_name, new_name) = decode_rename(&mut d)?;
-                    Record::Rename { inode, old_parent, new_parent, old_name, new_name }
+                    let (inode, old_parent, new_parent, old_name, new_name) =
+                        decode_rename(&mut d)?;
+                    Record::Rename {
+                        inode,
+                        old_parent,
+                        new_parent,
+                        old_name,
+                        new_name,
+                    }
+                }
+                8 => {
+                    let cp = decode_checkpoint(&mut d)?;
+                    Record::Checkpoint(cp)
                 }
                 _ => return Err(VfsError::CorruptLog("unexpected tag".into())),
             };
@@ -442,7 +471,6 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
 
         3 => {
             // DataWrite: body = [tag][inode u64][logical u64][len u64][data_crc u32][header_crc u32][data bytes]
-            // Am citit deja tag. Mai citim restul header-ului mic:
 
             let mut hdr = [0u8; 28];
             if file.read_exact(&mut hdr).is_err() {
@@ -473,7 +501,7 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
             }
             let expected_header_crc = u32::from_le_bytes(crc_buf);
 
-            // Reconstituim “payload mic” (tag + inode + logical + len + data_crc) și verificăm CRC
+            // Reconstituim payloadu (tag + inode + logical + len + data_crc) și verificăm CRC
             let mut scratch = Vec::with_capacity(1 + 28);
             scratch.push(3);
             scratch.extend_from_slice(&hdr);
@@ -483,11 +511,8 @@ pub fn read_next_record(file: &mut File, offset: u64) -> Result<Option<(DecodedR
                 return Ok(None);
             }
 
-            // AICI este punctul important:
-            // poziția curentă în fișier este exact începutul datelor
             let data_payload_offset = file.stream_position().map_err(VfsError::Io)?;
 
-            // verificăm dacă datele există complet (altfel crash-tail => stop replay)
             let end = file.seek(SeekFrom::End(0))?;
             let need_end = data_payload_offset.saturating_add(len);
             if need_end > end {
@@ -611,13 +636,20 @@ fn decode_set_times(
     Ok((inode, created, modified))
 }
 
-fn encode_dir_entry_remove(e: &mut Encoder, parent: crate::structs::InodeId, name: &str, inode: crate::structs::InodeId) {
+fn encode_dir_entry_remove(
+    e: &mut Encoder,
+    parent: crate::structs::InodeId,
+    name: &str,
+    inode: crate::structs::InodeId,
+) {
     e.put_u64(parent.0);
     e.put_string(name);
     e.put_u64(inode.0);
 }
 
-fn decode_dir_entry_remove(d: &mut Decoder<'_>) -> Result<(crate::structs::InodeId, String, crate::structs::InodeId)> {
+fn decode_dir_entry_remove(
+    d: &mut Decoder<'_>,
+) -> Result<(crate::structs::InodeId, String, crate::structs::InodeId)> {
     let parent = crate::structs::InodeId(d.get_u64()?);
     let name = d.get_string()?;
     let inode = crate::structs::InodeId(d.get_u64()?);
@@ -639,11 +671,48 @@ fn encode_rename(
     e.put_string(new_name);
 }
 
-fn decode_rename(d: &mut Decoder<'_>,) -> Result<(InodeId, InodeId, InodeId, String,String)> {
+fn decode_rename(d: &mut Decoder<'_>) -> Result<(InodeId, InodeId, InodeId, String, String)> {
     let inode = InodeId(d.get_u64()?);
     let old_parent = InodeId(d.get_u64()?);
     let new_parent = InodeId(d.get_u64()?);
     let old_name = d.get_string()?;
     let new_name = d.get_string()?;
     Ok((inode, old_parent, new_parent, old_name, new_name))
+}
+fn encode_checkpoint(e: &mut Encoder, cp: &Checkpoint) {
+    e.put_u64(cp.next_inode.0);
+
+    // free_extents
+    e.put_u64(cp.free_extents.len() as u64);
+    for ex in &cp.free_extents {
+        encode_extent(e, ex);
+    }
+
+    // inodes
+    e.put_u64(cp.inodes.len() as u64);
+    for ino in &cp.inodes {
+        encode_inode_snapshot(e, ino);
+    }
+}
+
+fn decode_checkpoint(d: &mut Decoder<'_>) -> Result<Checkpoint> {
+    let next_inode = InodeId(d.get_u64()?);
+
+    let free_n = d.get_u64()? as usize;
+    let mut free_extents = Vec::with_capacity(free_n);
+    for _ in 0..free_n {
+        free_extents.push(decode_extent(d)?);
+    }
+
+    let inode_n = d.get_u64()? as usize;
+    let mut inodes = Vec::with_capacity(inode_n);
+    for _ in 0..inode_n {
+        inodes.push(decode_inode_snapshot(d)?);
+    }
+
+    Ok(Checkpoint {
+        next_inode,
+        free_extents,
+        inodes,
+    })
 }

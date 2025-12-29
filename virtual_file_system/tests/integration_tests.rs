@@ -1,10 +1,10 @@
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
+use std::thread::sleep;
+use std::time::Duration;
 use virtual_file_system::Vfs;
 use virtual_file_system::no_sql::*;
 use virtual_file_system::structs::*;
-use std::thread::sleep;
-use std::time::Duration;
 
 #[test]
 fn record_roundtrip_inode_alloc() {
@@ -332,4 +332,81 @@ fn rename_persists_after_reopen() {
     let v2 = Vfs::mount(path).unwrap();
     assert!(!v2.exists("rs/a.txt"));
     assert!(v2.exists("rs/b.txt"));
+}
+
+#[test]
+fn checkpoint_reopen_ok() {
+    let path = "target/checkpoint1.vfs";
+    let _ = std::fs::remove_file(path);
+
+    {
+        let mut v = Vfs::mount(path).unwrap();
+        v.create_dir("rs").unwrap();
+
+        let mut f = v.create("rs/a.txt").unwrap();
+        f.write_all(b"hello").unwrap();
+        drop(f);
+
+        v.checkpoint().unwrap();
+    }
+
+    let v2 = Vfs::mount(path).unwrap();
+
+    let mut s = String::new();
+    v2.open("rs/a.txt").unwrap().read_to_string(&mut s).unwrap();
+    assert_eq!(s, "hello");
+}
+
+#[test]
+fn checkpoint_then_more_ops() {
+    let path = "target/checkpoint2.vfs";
+    let _ = std::fs::remove_file(path);
+
+    {
+        let mut v = Vfs::mount(path).unwrap();
+        v.create_dir("rs").unwrap();
+
+        let mut f = v.create("rs/a.txt").unwrap();
+        f.write_all(b"hello").unwrap();
+        drop(f);
+
+        v.checkpoint().unwrap();
+
+        // Operație DUPĂ checkpoint
+        v.rename("rs/a.txt", "rs/b.txt").unwrap();
+    }
+
+    let v2 = Vfs::mount(path).unwrap();
+    assert!(!v2.exists("rs/a.txt"));
+    assert!(v2.exists("rs/b.txt"));
+
+    let mut s = String::new();
+    v2.open("rs/b.txt").unwrap().read_to_string(&mut s).unwrap();
+    assert_eq!(s, "hello");
+}
+
+#[test]
+fn test_cerinta() {
+    let mut vfs = Vfs::mount("realfile.vfs").unwrap();
+
+    vfs.create_dir("rs").unwrap();
+    {
+        let mut f1 = vfs.create("rs/abc.txt").unwrap();
+        let mut f2 = vfs.create("rs/def.txt").unwrap();
+
+        f1.write_all(b"hello").unwrap();
+        f2.write_all(b"world").unwrap();
+    }
+
+    let mut data = String::new();
+    for entry in vfs.read_dir("rs").unwrap() {
+        let entry = entry.unwrap();
+        data.clear();
+
+        let mut file = vfs.open_file(&format!("rs/{}", entry.name)).unwrap();
+        file.read_to_string(&mut data).unwrap();
+
+        print!("{}", data);
+    }
+    println!();
 }

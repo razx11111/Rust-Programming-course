@@ -176,7 +176,7 @@ impl Vfs {
         let inner = self.inner.borrow();
         inner.path_to_inode(path).is_ok()
     }
-    
+
     pub fn metadata(&self, path: &str) -> Result<Metadata> {
         let inner = self.inner.borrow();
         inner.metadata(path)
@@ -194,29 +194,54 @@ impl Vfs {
         self.inner.borrow_mut().rename(old_path, new_path)
     }
 
+    pub fn checkpoint(&mut self) -> Result<()> {
+        self.inner.borrow_mut().write_checkpoint()
+    }
 }
 
 impl Inner {
     fn mount_replay(&mut self) -> Result<()> {
-        // logu incepe dupa header
-        // trebuie să fie exact aceeași constantă ca în no_sql
-        let mut offset: u64 = 24;
+        let header_len: u64 = 24;
+        let mut offset = header_len;
 
-        // mergem record cu record până când read_next_record spune None
-        // None = EOF sau tail incomplet
-        while let Some((decoded, next_offset)) = read_next_record(&mut self.file, offset)? {
+        // Pass 1: găsim ultimul checkpoint valid
+        let mut last_cp: Option<(crate::structs::Checkpoint, u64)> = None;
+
+        while let Some((decoded, next)) = read_next_record(&mut self.file, offset)? {
+            if let Record::Checkpoint(cp) = decoded.record {
+                last_cp = Some((cp, next));
+            }
+            offset = next;
+        }
+
+        // Dacă am găsit checkpoint:
+        if let Some((cp, replay_from)) = last_cp {
+            self.load_from_checkpoint(&cp)?;
+
+            // replay doar după checkpoint
+            let mut off2 = replay_from;
+            while let Some((decoded, next)) = read_next_record(&mut self.file, off2)? {
+                self.apply_decoded(decoded)?;
+                off2 = next;
+            }
+
+            self.recalc_next_inode();
+
+            return Ok(());
+        }
+
+        // Dacă nu există checkpoint: replay normal de la început
+        self.inodes.clear();
+        self.children.clear();
+
+        let mut off3 = header_len;
+        while let Some((decoded, next)) = read_next_record(&mut self.file, off3)? {
             self.apply_decoded(decoded)?;
-            offset = next_offset;
+            off3 = next;
         }
 
-        // după replay, next_inode trebuie să fie > max inode id
-        let mut max_id = 0u64;
-        for id in self.inodes.keys() {
-            max_id = max_id.max(id.0);
-        }
-        self.next_inode = InodeId(max_id + 1);
+        self.recalc_next_inode();
 
-        // validare minimă: root există
         if !self.inodes.contains_key(&self.header.root) {
             return Err(VfsError::CorruptLog(
                 "missing root inode after replay".into(),
@@ -280,10 +305,20 @@ impl Inner {
             } => {
                 self.apply_set_times(*inode, created_at, modified_at)?;
             }
-            Record::DirEntryRemove { parent, name, inode } => {
+            Record::DirEntryRemove {
+                parent,
+                name,
+                inode,
+            } => {
                 self.apply_dir_entry_remove(*parent, name, *inode)?;
             }
-            Record::Rename { inode, old_parent, new_parent, old_name, new_name } => {
+            Record::Rename {
+                inode,
+                old_parent,
+                new_parent,
+                old_name,
+                new_name,
+            } => {
                 self.apply_rename(*inode, *old_parent, *new_parent, old_name, new_name)?;
             }
             _ => {}
@@ -424,14 +459,16 @@ impl Inner {
         };
         write_record(&mut self.file, &Record::DirEntryAdd { entry: de.clone() })?;
 
-        write_record(&mut self.file, &Record::SetTimes {
-            inode: new_id,
-            created_at: Some(now),
-            modified_at: Some(now),
-        })?;
+        write_record(
+            &mut self.file,
+            &Record::SetTimes {
+                inode: new_id,
+                created_at: Some(now),
+                modified_at: Some(now),
+            },
+        )?;
         self.apply_record(&Record::InodeAlloc(snap))?;
         self.apply_record(&Record::DirEntryAdd { entry: de })?;
-
 
         Ok(())
     }
@@ -536,11 +573,14 @@ impl Inner {
             kind: NodeKind::File,
         };
         write_record(&mut self.file, &Record::DirEntryAdd { entry: de.clone() })?;
-        write_record(&mut self.file, &Record::SetTimes {
-            inode: new_id,
-            created_at: Some(now),
-            modified_at: Some(now),
-        })?;
+        write_record(
+            &mut self.file,
+            &Record::SetTimes {
+                inode: new_id,
+                created_at: Some(now),
+                modified_at: Some(now),
+            },
+        )?;
         self.apply_record(&Record::InodeAlloc(snap))?;
         self.apply_record(&Record::DirEntryAdd { entry: de })?;
 
@@ -577,11 +617,14 @@ impl Inner {
         node.metadata.modified_at = Timestamp::now();
 
         let now = Timestamp::now();
-        write_record(&mut self.file, &Record::SetTimes {
-            inode,
-            created_at: None,
-            modified_at: Some(now),
-        })?;
+        write_record(
+            &mut self.file,
+            &Record::SetTimes {
+                inode,
+                created_at: None,
+                modified_at: Some(now),
+            },
+        )?;
         self.apply_record(&Record::SetTimes {
             inode,
             created_at: None,
@@ -707,11 +750,14 @@ impl Inner {
         self.apply_record(&Record::Truncate { inode, len })?;
 
         let now = Timestamp::now();
-        write_record(&mut self.file, &Record::SetTimes {
-            inode,
-            created_at: None,
-            modified_at: Some(now),
-        })?;
+        write_record(
+            &mut self.file,
+            &Record::SetTimes {
+                inode,
+                created_at: None,
+                modified_at: Some(now),
+            },
+        )?;
         self.apply_record(&Record::SetTimes {
             inode,
             created_at: None,
@@ -735,8 +781,12 @@ impl Inner {
         Ok(())
     }
 
-    fn apply_set_times( &mut self, inode: InodeId, created_at: &Option<Timestamp>,modified_at: &Option<Timestamp>) -> 
-    Result<()> {
+    fn apply_set_times(
+        &mut self,
+        inode: InodeId,
+        created_at: &Option<Timestamp>,
+        modified_at: &Option<Timestamp>,
+    ) -> Result<()> {
         let node = self
             .inodes
             .get_mut(&inode)
@@ -766,24 +816,37 @@ impl Inner {
         Ok(inode.metadata.clone())
     }
 
-    fn apply_dir_entry_remove(&mut self, parent: InodeId, name: &str, inode: InodeId) -> Result<()> {
+    fn apply_dir_entry_remove(
+        &mut self,
+        parent: InodeId,
+        name: &str,
+        inode: InodeId,
+    ) -> Result<()> {
         // parent trebuie să existe și să fie dir
-        let p = self.inodes.get(&parent)
+        let p = self
+            .inodes
+            .get(&parent)
             .ok_or_else(|| VfsError::CorruptLog("direntry remove parent missing".into()))?;
         if p.kind != NodeKind::Dir {
-            return Err(VfsError::CorruptLog("direntry remove parent not dir".into()));
+            return Err(VfsError::CorruptLog(
+                "direntry remove parent not dir".into(),
+            ));
         }
 
         let key = (parent, name.to_string());
 
         // trebuie să existe entry-ul
-        let existing = self.children.get(&key)
+        let existing = self
+            .children
+            .get(&key)
             .copied()
             .ok_or_else(|| VfsError::CorruptLog("direntry remove missing entry".into()))?;
 
         // trebuie să corespundă inode-ului din log
         if existing != inode {
-            return Err(VfsError::CorruptLog("direntry remove inode mismatch".into()));
+            return Err(VfsError::CorruptLog(
+                "direntry remove inode mismatch".into(),
+            ));
         }
 
         self.children.remove(&key);
@@ -801,7 +864,10 @@ impl Inner {
             let mut cur = self.header.root;
             for p in parent_parts {
                 let key = (cur, (*p).to_string());
-                cur = *self.children.get(&key).ok_or_else(|| VfsError::NotFound(path.into()))?;
+                cur = *self
+                    .children
+                    .get(&key)
+                    .ok_or_else(|| VfsError::NotFound(path.into()))?;
             }
             cur
         };
@@ -813,11 +879,15 @@ impl Inner {
         let (parent, name) = self.find_parent_and_leaf(path)?;
         let key = (parent, name.clone());
 
-        let inode = self.children.get(&key)
+        let inode = self
+            .children
+            .get(&key)
             .copied()
             .ok_or_else(|| VfsError::NotFound(path.into()))?;
 
-        let node = self.inodes.get(&inode)
+        let node = self
+            .inodes
+            .get(&inode)
             .ok_or_else(|| VfsError::CorruptLog("unlink inode missing".into()))?;
 
         if node.kind != expect_kind {
@@ -836,7 +906,11 @@ impl Inner {
         }
 
         // persist
-        let rec = Record::DirEntryRemove { parent, name: name.clone(), inode };
+        let rec = Record::DirEntryRemove {
+            parent,
+            name: name.clone(),
+            inode,
+        };
         self.file.seek(SeekFrom::End(0))?;
         write_record(&mut self.file, &rec)?;
         self.file.sync_all()?;
@@ -856,13 +930,17 @@ impl Inner {
     ) -> Result<()> {
         // Validate parents and old entry before getting mutable borrow
         // old_parent / new_parent trebuie să existe și să fie dir
-        let op = self.inodes.get(&old_parent)
+        let op = self
+            .inodes
+            .get(&old_parent)
             .ok_or_else(|| VfsError::CorruptLog("rename old_parent missing".into()))?;
         if op.kind != NodeKind::Dir {
             return Err(VfsError::CorruptLog("rename old_parent not dir".into()));
         }
 
-        let np = self.inodes.get(&new_parent)
+        let np = self
+            .inodes
+            .get(&new_parent)
             .ok_or_else(|| VfsError::CorruptLog("rename new_parent missing".into()))?;
         if np.kind != NodeKind::Dir {
             return Err(VfsError::CorruptLog("rename new_parent not dir".into()));
@@ -870,11 +948,15 @@ impl Inner {
 
         // trebuie să existe vecheaentry și să pointeze la inode
         let old_key = (old_parent, old_name.to_string());
-        let existing = self.children.get(&old_key)
+        let existing = self
+            .children
+            .get(&old_key)
             .copied()
             .ok_or_else(|| VfsError::CorruptLog("rename old entry missing".into()))?;
         if existing != inode {
-            return Err(VfsError::CorruptLog("rename old entry inode mismatch".into()));
+            return Err(VfsError::CorruptLog(
+                "rename old entry inode mismatch".into(),
+            ));
         }
 
         // noua destinație trebuie să fie liberă (MVP: fără overwrite)
@@ -884,7 +966,9 @@ impl Inner {
         }
 
         // inode trebuie să existe
-        let node = self.inodes.get_mut(&inode)
+        let node = self
+            .inodes
+            .get_mut(&inode)
             .ok_or_else(|| VfsError::CorruptLog("rename inode missing".into()))?;
 
         // mutarea efectivă
@@ -897,13 +981,15 @@ impl Inner {
 
         Ok(())
     }
-    
+
     fn rename(&mut self, old_path: &str, new_path: &str) -> Result<()> {
         // old: (old_parent, old_name, inode)
         let (old_parent, old_name) = self.find_parent_and_leaf(old_path)?;
         let old_key = (old_parent, old_name.clone());
 
-        let inode = self.children.get(&old_key)
+        let inode = self
+            .children
+            .get(&old_key)
             .copied()
             .ok_or_else(|| VfsError::NotFound(old_path.into()))?;
 
@@ -912,7 +998,9 @@ impl Inner {
         let new_key = (new_parent, new_name.clone());
 
         // new parent trebuie să existe și să fie dir
-        let np = self.inodes.get(&new_parent)
+        let np = self
+            .inodes
+            .get(&new_parent)
             .ok_or_else(|| VfsError::NotFound(new_path.into()))?;
         if np.kind != NodeKind::Dir {
             return Err(VfsError::NotADir(new_path.into()));
@@ -947,6 +1035,86 @@ impl Inner {
         self.apply_record(&times)?;
 
         Ok(())
+    }
+
+    fn make_checkpoint(&self) -> crate::structs::Checkpoint {
+        let mut snaps = Vec::with_capacity(self.inodes.len());
+        for inode in self.inodes.values() {
+            snaps.push(InodeSnapshot {
+                id: inode.id,
+                parent: inode.parent,
+                name: inode.name.clone(),
+                kind: inode.kind,
+                metadata: inode.metadata.clone(),
+                extents: inode.extents.clone(),
+            });
+        }
+
+        snaps.sort_by_key(|s| s.id.0);
+
+        Checkpoint {
+            next_inode: self.next_inode,
+            free_extents: vec![],
+            inodes: snaps,
+        }
+    }
+
+    fn write_checkpoint(&mut self) -> Result<()> {
+        let cp = self.make_checkpoint();
+        let rec = Record::Checkpoint(cp);
+
+        write_record(&mut self.file, &rec)?;
+
+        Ok(())
+    }
+
+    fn load_from_checkpoint(&mut self, cp: &crate::structs::Checkpoint) -> Result<()> {
+        self.inodes.clear();
+        self.children.clear();
+
+        // reconstruim inodes
+        for snap in &cp.inodes {
+            let inode = Inode {
+                id: snap.id,
+                parent: snap.parent,
+                name: snap.name.clone(),
+                kind: snap.kind,
+                metadata: snap.metadata.clone(),
+                extents: snap.extents.clone(),
+            };
+            self.inodes.insert(inode.id, inode);
+        }
+
+        // reconstruim children
+        for inode in self.inodes.values() {
+            if let Some(p) = inode.parent {
+                let key = (p, inode.name.clone());
+
+                if self.children.contains_key(&key) {
+                    return Err(VfsError::CorruptLog(
+                        "checkpoint has duplicate (parent,name)".into(),
+                    ));
+                }
+
+                self.children.insert(key, inode.id);
+            }
+        }
+
+        self.next_inode = cp.next_inode; // din checkpoint
+
+        if !self.inodes.contains_key(&self.header.root) {
+            return Err(VfsError::CorruptLog("checkpoint missing root inode".into()));
+        }
+
+        Ok(())
+    }
+
+    fn recalc_next_inode(&mut self) {
+        let mut max_id = 0u64;
+        for id in self.inodes.keys() {
+            max_id = max_id.max(id.0);
+        }
+        self.next_inode = InodeId(max_id + 1);
     }
 }
 
