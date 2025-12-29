@@ -2,6 +2,13 @@
 name = "virtual_file_system"
 version = "0.1.0"
 edition = "2024"
+authors = ["Gheoca Razvan"]
+description = "a Virtual File System with local storage"
+license = "MIT"
+keywords = ["keyword1"]
+categories = ["filesystem"]
+repository = "https://github.com/razx11111/Rust-Programming-course/tree/main/virtual_file_system"
+readme = "README.md"
 
 [dependencies]
-crc32fast = "*"
+crc32fast = "1.5.0"
