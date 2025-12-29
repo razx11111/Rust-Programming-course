@@ -78,7 +78,6 @@ impl Vfs {
                 extents: vec![],
             };
 
-            // IMPORTANT:
             // în log, root-ul devine "prima operație" după header
             write_record(&mut file, &Record::InodeAlloc(root_snap.clone()))?;
 
