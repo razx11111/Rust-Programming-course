@@ -1,24 +1,20 @@
 use crate::VfsError;
 use crate::structs::InodeId;
-use crate::vfs::Vfs;
+use crate::vfs::*;
 use std::cell::RefCell;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct VfsFile {
-    inner: Rc<RefCell<crate::vfs::Inner>>,
+    inner: Rc<RefCell<Inner>>,
     inode: InodeId,
     cursor: u64,
     writable: bool,
 }
 
 impl VfsFile {
-    pub(crate) fn new(
-        inner: Rc<RefCell<crate::vfs::Inner>>,
-        inode: InodeId,
-        writable: bool,
-    ) -> Self {
+    pub(crate) fn new(inner: Rc<RefCell<Inner>>, inode: InodeId, writable: bool) -> Self {
         Self {
             inner,
             inode,

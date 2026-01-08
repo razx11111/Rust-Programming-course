@@ -364,7 +364,9 @@ fn checkpoint_then_more_ops() -> Result<()> {
 
 #[test]
 fn test_cerinta() -> Result<()> {
-    let mut vfs = Vfs::mount("AAAAA.vfs")?;
+    let mut vfs = Vfs::mount("target/test_cerinta.vfs")?;
+    let _ = std::fs::remove_file("target/test_cerinta.vfs");
+
     vfs.create_dir("rs")?;
     {
         let mut f1 = vfs.create("rs/abc.txt")?;

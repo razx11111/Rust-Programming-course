@@ -203,14 +203,20 @@ impl Inner {
         let header_len: u64 = 24;
         let mut offset = header_len;
 
-        // Pass 1: găsim ultimul checkpoint valid
         let mut last_cp: Option<(crate::structs::Checkpoint, u64)> = None;
 
-        while let Some((decoded, next)) = read_next_record(&mut self.file, offset)? {
-            if let Record::Checkpoint(cp) = decoded.record {
-                last_cp = Some((cp, next));
+        loop {
+            match read_next_record(&mut self.file, offset) {
+                Ok(Some((decoded, next))) => {
+                    if let Record::Checkpoint(cp) = decoded.record {
+                        last_cp = Some((cp, next));
+                    }
+                    offset = next;
+                }
+                Ok(None) => break,                     // EOF
+                Err(VfsError::CorruptLog(_)) => break, // Ignorăm coada coruptă
+                Err(e) => return Err(e),               // Eroare critică
             }
-            offset = next;
         }
 
         // Dacă am găsit checkpoint:
@@ -603,7 +609,7 @@ impl Inner {
             write_data_write_record(&mut self.file, inode, off, buf, &mut self.scratch)?;
 
         // aplicăm în memorie ca la replay
-        node.extents.push(crate::structs::Extent {
+        node.extents.push(Extent {
             logical_offset: off,
             file_offset: data_payload_offset,
             len: buf.len() as u64,
@@ -657,10 +663,9 @@ impl Inner {
             *b = 0;
         }
 
-        // intervale din buffer care încă trebuie umplute (în coordonate “buffer”)
+        // intervale din buffer care încă trebuie umplute
         let mut holes: Vec<(usize, usize)> = vec![(0, n)];
 
-        // iterăm extents în reverse: ultima scriere are prioritate
         for ex in node.extents.iter().rev() {
             if holes.is_empty() {
                 break;
@@ -685,7 +690,7 @@ impl Inner {
             let buf_lo = (i_lo - off) as usize;
             let buf_hi = (i_hi - off) as usize;
 
-            // acum trebuie să scriem doar bucățile din [buf_lo, buf_hi) care sunt încă “holes”
+            // scriem doar bucățile din [buf_lo, buf_hi) care sunt încă holes
             let mut new_holes = Vec::new();
 
             for (h_lo, h_hi) in holes.into_iter() {
@@ -745,7 +750,7 @@ impl Inner {
 
         write_record(&mut self.file, &Record::Truncate { inode, len })?;
 
-        // apply in-memory (aceeași logică ca replay)
+        // apply in-memory
         self.apply_record(&Record::Truncate { inode, len })?;
 
         let now = Timestamp::now();
@@ -1036,7 +1041,7 @@ impl Inner {
         Ok(())
     }
 
-    fn make_checkpoint(&self) -> crate::structs::Checkpoint {
+    fn make_checkpoint(&self) -> Checkpoint {
         let mut snaps = Vec::with_capacity(self.inodes.len());
         for inode in self.inodes.values() {
             snaps.push(InodeSnapshot {
